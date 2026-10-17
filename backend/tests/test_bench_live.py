@@ -216,3 +216,58 @@ def test_recommendations_follow_the_numbers() -> None:
     concurrent = {**keeps_up, "final_delay_s": {"median": 9.0}, "resources": {"mem_available_min_mb": 150}}
     advice = bench.recommend({"live": [keeps_up], "concurrent": concurrent})
     assert "after the recording stops" in advice[1]
+
+
+def test_a_cut_needs_speech_followed_by_a_long_enough_pause() -> None:
+    assert bench.find_cut([True, True, False, False, False, False, False, False]) == 2
+    assert bench.find_cut([True, True, False, False]) is None  # pause too short
+    assert bench.find_cut([False] * 10) is None  # nobody spoke
+    assert bench.find_cut([True] * 10) is None  # still speaking
+
+
+def test_a_forced_cut_lands_on_the_quietest_moment() -> None:
+    samples = tone(2000) + quiet(100) + tone(900)
+    assert bench.quietest_block(samples) == 2000
+
+
+def test_block_mode_transcribes_each_stretch_once_after_its_pause() -> None:
+    audio = TimelineAudio(tone(1200) + quiet(1000) + tone(1500) + quiet(1300))
+    spoken = [(0, 1200, "Good morning, what brings you in?"), (2200, 3700, "I have a sore throat today.")]
+    server = TimelineServer(audio, spoken)
+    result, segments = bench.block_simulation(server, audio, model_name="fake")
+    assert [s.text for s in segments] == [text for _s, _e, text in spoken]
+    assert result.blocks == 2  # one request per stretch of speech, never re-processed
+    assert result.forced_cuts == 0
+    assert result.delay_after_pause_s is not None and result.delay_after_pause_s["max"] < 1.5
+    assert result.wait_after_stop_s == 0.0  # everything was done before the recording ended
+
+
+def test_block_mode_cuts_a_long_monologue_without_losing_it(monkeypatch) -> None:
+    monkeypatch.setattr(bench, "MAX_BLOCK_MS", 3000)  # keep the test short
+    audio = TimelineAudio(tone(5000) + quiet(900))
+    server = TimelineServer(audio, [(0, 5000, "A very long explanation without any pause at all.")])
+    result, segments = bench.block_simulation(server, audio, model_name="fake")
+    assert result.forced_cuts >= 1
+    assert segments  # the speech was transcribed, not skipped as silence
+
+
+def test_speech_from_the_first_second_is_not_taken_for_background_noise() -> None:
+    detector = bench.SilenceDetector()
+    assert not detector.is_silent(tone(3000))
+    assert not detector.is_silent(tone(1000))
+
+
+def test_compact_labels_must_match_the_number_of_turns() -> None:
+    schema = bench.compact_schema(3)["properties"]["speakers"]
+    assert schema["minItems"] == schema["maxItems"] == 3
+    assert bench.compact_rejection({"speakers": ["C", "P", "U"]}, 3) is None
+    assert bench.compact_rejection({"speakers": []}, 3) == "count_0_of_3"
+    assert bench.compact_rejection({"speakers": ["C", "X", "U"]}, 3) == "bad_letter"
+    assert bench.compact_rejection({"labels": []}, 3) == "no_speakers_list"
+
+
+def test_compact_prompt_numbers_turns_and_marks_context() -> None:
+    prompt = bench.compact_prompt(["Any fever?", "No."], [("Good morning.", "clinician")])
+    assert "- [C] Good morning." in prompt
+    assert "1. Any fever?\n2. No." in prompt
+    assert "Label these 2 turns:" in prompt

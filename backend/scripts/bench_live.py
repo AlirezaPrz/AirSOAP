@@ -172,8 +172,12 @@ class SilenceDetector:
     def threshold(self) -> float:
         if len(self.levels) < 10:
             return self.minimum
-        floor = sorted(self.levels)[len(self.levels) // 10]
-        return max(self.minimum, 3.0 * floor)
+        ordered = sorted(self.levels)
+        floor = ordered[len(ordered) // 10]
+        typical = ordered[len(ordered) // 2]
+        # Never above half the typical level: if someone talks from the very first second there is no
+        # quiet to learn the noise floor from, and speech must not be mistaken for background.
+        return max(self.minimum, min(3.0 * floor, 0.5 * typical))
 
     def blocks(self, samples: array) -> list[bool]:
         """True for each 100 ms block that holds speech."""
@@ -531,6 +535,127 @@ def live_simulation(
     return result, state
 
 
+# --- pause-cut blocks ----------------------------------------------------------------------------
+
+MIN_BLOCK_MS = 1500
+BLOCK_PAUSE_MS = 600
+MAX_BLOCK_MS = 15000
+
+
+@dataclass
+class BlockResult:
+    model: str
+    blocks: int = 0
+    forced_cuts: int = 0
+    inference_s: dict | None = None
+    delay_after_pause_s: dict | None = None
+    max_behind_s: float = 0.0
+    wait_after_stop_s: float = 0.0
+    wer: float | None = None
+    resources: dict = field(default_factory=dict)
+    labelling: dict | None = None
+
+
+def find_cut(levels: list[bool], pause_ms: int = BLOCK_PAUSE_MS) -> int | None:
+    """Where speech ended before a pause long enough to cut at, in 100 ms blocks from the start."""
+    quiet = 0
+    for speech in reversed(levels):
+        if speech:
+            break
+        quiet += 1
+    spoke = quiet < len(levels)
+    if spoke and quiet * 100 >= pause_ms:
+        return len(levels) - quiet
+    return None
+
+
+def quietest_block(samples: array, search_ms: int = 3000) -> int:
+    """Offset (ms) of the quietest 100 ms in the last ``search_ms``, for a forced cut mid-speech."""
+    step = RATE // 10
+    start = max(0, len(samples) - search_ms * RATE // 1000)
+    best, best_level = len(samples), float("inf")
+    for i in range(start, len(samples) - step + 1, step):
+        level = rms(samples[i : i + step])
+        if level < best_level:
+            best, best_level = i, level
+    return best * 1000 // RATE
+
+
+def block_simulation(
+    server: "WhisperServer",
+    audio: Audio,
+    *,
+    model_name: str,
+    labeller: "Labeller | None" = None,
+    show_text: bool = False,
+) -> tuple[BlockResult, list[Segment]]:
+    """Real-time replay that transcribes each stretch of speech once, at full context, when a pause ends it.
+
+    No sliding window and no re-processing: a block is final for the live view as soon as it is
+    transcribed. A stretch with no pause for 15 s is cut at its quietest point.
+    """
+    result = BlockResult(model=model_name)
+    silence = SilenceDetector()
+    segments: list[Segment] = []
+    inference, delays = [], []
+    cut = 0
+    total = audio.duration_ms
+    began = time.monotonic()
+
+    def audio_now() -> int:
+        return min(total, int((time.monotonic() - began) * 1000))
+
+    def transcribe(start: int, end: int) -> float:
+        took, found = server.transcribe(audio.slice(start, end))
+        inference.append(took)
+        result.blocks += 1
+        for s in found:
+            segment = Segment(s.start_ms + start, min(s.end_ms + start, end), s.text)
+            segments.append(segment)
+            if show_text:
+                print(f"    [{segment.start_ms / 1000:6.1f}s] {segment.text}")
+        if labeller:
+            labeller.offer(segments)
+        return took
+
+    with ResourceSampler() as sampler:
+        while True:
+            available = audio_now()
+            result.max_behind_s = max(result.max_behind_s, (available - cut) / 1000)
+            if available >= total:
+                if available - cut > 300 and not silence.is_silent(audio.slice(cut, total)):
+                    result.wait_after_stop_s = round(transcribe(cut, total), 2)  # what Stop would wait for
+                break
+            region = audio.slice(cut, available)
+            if available - cut >= MIN_BLOCK_MS:
+                levels = silence.blocks(region)
+                speech_end = find_cut(levels)
+                if not any(levels) and available - cut >= 2000:
+                    cut = available - 300  # nothing said: skip ahead without asking Whisper
+                elif speech_end is not None:
+                    end = cut + speech_end * 100 + 300
+                    transcribe(cut, end)
+                    delays.append((audio_now() - (cut + speech_end * 100)) / 1000)
+                    cut = end
+                    continue
+                elif available - cut >= MAX_BLOCK_MS:
+                    end = cut + quietest_block(region)
+                    transcribe(cut, end)
+                    result.forced_cuts += 1
+                    cut = end
+                    continue
+            time.sleep(0.25)
+        if labeller:
+            labeller.finish()
+            result.labelling = labeller.report()
+
+    result.inference_s = summarize(inference)
+    result.delay_after_pause_s = summarize(delays)
+    result.wer = round(word_error_rate(reference_text(), " ".join(s.text for s in segments)), 3)
+    result.resources = sampler.report()
+    return result, segments
+
+
 # --- speaker roles with Qwen ---------------------------------------------------------------------
 
 SPEAKER_SYSTEM = (
@@ -562,6 +687,59 @@ SPEAKER_SCHEMA = {
     },
     "required": ["labels"],
 }
+
+
+COMPACT_SYSTEM = (
+    "You label who is speaking in a transcript of a medical visit between one clinician and one patient. "
+    "You only see the words, never the voices. The turns are numbered. Answer with one letter per turn, "
+    "in order: C if the clinician said it, P if the patient said it, U if the words alone do not show who "
+    "spoke or you are not sure. Clues: the clinician asks about symptoms and history, examines, states "
+    "findings and test results, names a diagnosis, prescribes and gives instructions. The patient describes "
+    "symptoms, answers the clinician's questions and asks about their own care. Short replies such as "
+    "'Okay.', 'Yes.' or 'Thank you.' are usually U. Do not guess to fill every turn."
+)
+
+COMPACT_LETTERS = {"C": "clinician", "P": "patient", "U": "unknown"}
+
+
+def compact_schema(count: int) -> dict:
+    """Exactly one letter per turn: the model cannot stop early or add turns."""
+    return {
+        "type": "object",
+        "properties": {
+            "speakers": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(COMPACT_LETTERS)},
+                "minItems": count,
+                "maxItems": count,
+            }
+        },
+        "required": ["speakers"],
+    }
+
+
+def compact_prompt(texts: list[str], earlier: list[tuple[str, str]]) -> str:
+    lines = []
+    if earlier:
+        lines.append("Earlier turns, already labelled (for context only):")
+        lines += [f"- [{COMPACT_LETTERS_REVERSE[s]}] {t}" for t, s in earlier]
+        lines.append("")
+    lines.append(f"Label these {len(texts)} turns:")
+    lines += [f"{n}. {t}" for n, t in enumerate(texts, 1)]
+    return "\n".join(lines)
+
+
+COMPACT_LETTERS_REVERSE = {v: k for k, v in COMPACT_LETTERS.items()}
+
+
+def compact_rejection(answer: object, count: int) -> str | None:
+    if not isinstance(answer, dict) or not isinstance(answer.get("speakers"), list):
+        return "no_speakers_list"
+    if len(answer["speakers"]) != count:
+        return f"count_{len(answer['speakers'])}_of_{count}"
+    if any(letter not in COMPACT_LETTERS for letter in answer["speakers"]):
+        return "bad_letter"
+    return None
 
 
 def rejection_reason(answer: object, ids: list[str]) -> str | None:
@@ -656,6 +834,41 @@ class Ollama:
         ids = [i for i, _ in turns]
         return took, validate_labels(answer, ids), rejection_reason(answer, ids)
 
+    def label_compact(
+        self, model: str, texts: list[str], earlier: list[tuple[str, str]]
+    ) -> tuple[float, list[str] | None, str | None]:
+        """The one-letter format: (seconds, labels or None, rejection reason or None)."""
+        began = time.monotonic()
+        try:
+            response = self._post(
+                "/api/chat",
+                {
+                    "model": model,
+                    "stream": False,
+                    "format": compact_schema(len(texts)),
+                    "keep_alive": "5m",
+                    "options": {"temperature": 0, "num_ctx": 4096},
+                    "messages": [
+                        {"role": "system", "content": COMPACT_SYSTEM},
+                        {"role": "user", "content": compact_prompt(texts, earlier)},
+                    ],
+                },
+                600,
+            )
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            return time.monotonic() - began, None, f"request_failed_{type(exc).__name__}"
+        took = time.monotonic() - began
+        if response.get("done_reason") == "length":
+            return took, None, "truncated"
+        try:
+            answer = json.loads(response.get("message", {}).get("content", ""))
+        except ValueError:
+            return took, None, "not_json"
+        reason = compact_rejection(answer, len(texts))
+        if reason:
+            return took, None, reason
+        return took, [COMPACT_LETTERS[letter] for letter in answer["speakers"]], None
+
     def tiny(self, model: str) -> float:
         began = time.monotonic()
         self._post(
@@ -699,15 +912,15 @@ class Labeller:
     def offer(self, committed: list[Segment]) -> None:
         if len(committed) - self.done < self.batch or self._busy.locked():
             return
-        turns = [(f"s{i}", s.text) for i, s in enumerate(committed[self.done :], start=self.done)]
+        texts = [s.text for s in committed[self.done :]]
         self.done = len(committed)
-        thread = threading.Thread(target=self._run, args=(turns,), daemon=True)
+        thread = threading.Thread(target=self._run, args=(texts,), daemon=True)
         self._threads.append(thread)
         thread.start()
 
-    def _run(self, turns: list[tuple[str, str]]) -> None:
+    def _run(self, texts: list[str]) -> None:
         with self._busy:
-            took, labels, reason = self.ollama.label(self.model, turns, [])
+            took, labels, reason = self.ollama.label_compact(self.model, texts, [])
             self.times.append(took)
             self.invalid += labels is None
             if reason:
@@ -727,6 +940,24 @@ class Labeller:
 
 
 # --- the benchmark -------------------------------------------------------------------------------
+
+
+def run_blocks(
+    server: WhisperServer, audio: Audio, name: str, show_text: bool, labeller: Labeller | None = None
+) -> dict:
+    run, _segments = block_simulation(server, audio, model_name=name, labeller=labeller, show_text=show_text)
+    delay = run.delay_after_pause_s or {}
+    print(
+        f"    {run.blocks} blocks ({run.forced_cuts} forced), request {run.inference_s['median'] if run.inference_s else 0:.2f} s "
+        f"(p90 {run.inference_s['p90'] if run.inference_s else 0:.2f}), text {delay.get('median', float('nan')):.1f} s after "
+        f"each pause (p90 {delay.get('p90', float('nan')):.1f}), most behind {run.max_behind_s:.1f} s, "
+        f"wait after Stop {run.wait_after_stop_s:.1f} s, word errors {run.wer:.0%}, "
+        f"CPU {run.resources.get('cpu_percent_mean')}%, {run.resources.get('temperature_max_c')} °C, "
+        f"fan {run.resources.get('fan_rpm_max')} rpm, free memory {run.resources.get('mem_available_min_mb')} MB"
+    )
+    if run.labelling:
+        print(f"    labelling {run.labelling}")
+    return asdict(run)
 
 
 def section(title: str) -> None:
@@ -791,6 +1022,33 @@ def recommend(results: dict) -> list[str]:
                 "Run speaker labelling after the recording stops: during recording it slowed live text "
                 f"by {slower:.1f} s or left too little memory ({memory} MB free at the lowest)."
             )
+    for block in results.get("blocks", []):
+        delay = block.get("delay_after_pause_s") or {}
+        keeps = block["max_behind_s"] < 20 and delay.get("p90", 99) <= 10
+        advice.append(
+            f"Pause-cut blocks with {block['model']}: text {delay.get('median', float('nan')):.1f} s after each pause "
+            f"(p90 {delay.get('p90', float('nan')):.1f}), at most {block['max_behind_s']:.0f} s behind, "
+            f"{block['wer']:.0%} word errors, {block['wait_after_stop_s']:.0f} s to finish after Stop: "
+            + ("keeps up." if keeps else "does not keep up.")
+        )
+    concurrent_blocks = results.get("concurrent_blocks")
+    if concurrent_blocks:
+        labelling = concurrent_blocks.get("labelling") or {}
+        alone = next((b for b in results.get("blocks", []) if b["model"] == concurrent_blocks["model"]), None)
+        slower = ((concurrent_blocks.get("delay_after_pause_s") or {}).get("median", 99)) - (
+            ((alone or {}).get("delay_after_pause_s") or {}).get("median", 0)
+        )
+        advice.append(
+            f"Labelling during block recording: {labelling.get('batches', 0)} batches, {labelling.get('invalid', 0)} rejected, "
+            f"live text {slower:+.1f} s slower, lowest free memory {concurrent_blocks['resources'].get('mem_available_min_mb')} MB."
+        )
+    compact = results.get("speaker_labels_compact")
+    if compact and compact.get("score"):
+        score = compact["score"]
+        advice.append(
+            f"One-letter speaker labels: {compact['first_15_s']:.0f} s per 15 turns, {score['labelled']} of "
+            f"{score['turns']} labelled, {score['accuracy_of_labelled']:.0%} of those correct."
+        )
     base = results.get("whole_file_live_model")
     final = results.get("final")
     if base and final:
@@ -876,17 +1134,15 @@ def main() -> None:
         sizes = [5, 10, 20] if args.quick else [3, 5, 8, 10, 15, 20]
         results["windows"] = window_benchmark(server, audio, sizes, reps=2 if args.quick else 3)
 
-        section("C. Live simulation at real speed")
-        reduced_helps = any(
+        section("C. Sliding-window live simulation at real speed")
+        # Reduced context only counts if it is faster AND keeps the words at every window size;
+        # on the Pi it has invented text, so one bad window rules it out.
+        reduced_helps = all(
             row["matched"]["median"] < 0.85 * row["full"]["median"]
-            and row["matched_vs_full_similarity"] > 0.9
+            and row["matched_vs_full_similarity"] > 0.95
             for row in results["windows"]
         )
-        settings = (
-            [(3.0, reduced_helps)]
-            if args.quick
-            else [(2.0, reduced_helps), (3.0, reduced_helps), (3.0, False)]
-        )
+        settings = [(3.0, False)] if args.quick or not reduced_helps else [(3.0, True), (3.0, False)]
         results["live"] = []
         for step, reduced in dict.fromkeys(settings):
             print(
@@ -901,8 +1157,14 @@ def main() -> None:
                 f"    request {run.inference_s['median']:.2f} s (p90 {run.inference_s['p90']:.2f}), "
                 f"confirmed {run.final_delay_s['median'] if run.final_delay_s else float('nan'):.1f} s after speech, "
                 f"most behind {run.max_behind_s:.1f} s, word errors {run.wer_live:.0%}, "
-                f"CPU {run.resources.get('cpu_percent_mean')}%, {run.resources.get('temperature_max_c')} °C"
+                f"CPU {run.resources.get('cpu_percent_mean')}%, {run.resources.get('temperature_max_c')} °C, "
+                f"fan {run.resources.get('fan_rpm_max')} rpm"
             )
+
+        section(
+            f"C2. Pause-cut blocks with {results['live_model']} (each stretch of speech transcribed once)"
+        )
+        results["blocks"] = [run_blocks(server, audio, results["live_model"], args.show_text)]
 
         if live_model != model:
             section(f"D0. Whole file with the live model ({results['live_model']}), for comparison")
@@ -915,6 +1177,9 @@ def main() -> None:
             server.stop()
             server = WhisperServer(binary, model, threads)
             results["final_model_load_s"] = round(server.start(), 2)
+
+            section(f"D1. Pause-cut blocks with {results['final_model']}")
+            results["blocks"].append(run_blocks(server, audio, results["final_model"], args.show_text))
 
         section(f"D. Final whole-file pass ({results['final_model']})")
         took, segments = server.transcribe(audio.samples)
@@ -942,6 +1207,29 @@ def main() -> None:
             section(f"E. Speaker roles with {args.speaker_model}")
             truth = [speaker for speaker, _ in DIALOGUE]
             turns = [(f"t{i}", text) for i, (_, text) in enumerate(DIALOGUE)]
+            texts = [text for _, text in DIALOGUE]
+            load = ollama.tiny(args.speaker_model)
+            print(f"  loading the model {load:.1f} s")
+            with ResourceSampler() as sampler:
+                c_first_s, c_first, c_first_reason = ollama.label_compact(args.speaker_model, texts[:15], [])
+                c_second_s, c_second, c_second_reason = ollama.label_compact(
+                    args.speaker_model,
+                    texts[15:],
+                    list(zip(texts[:15], c_first or ["unknown"] * 15, strict=True)),
+                )
+            compact = (c_first or ["unknown"] * 15) + (c_second or ["unknown"] * (len(texts) - 15))
+            results["speaker_labels_compact"] = {
+                "model_load_s": round(load, 2),
+                "first_15_s": round(c_first_s, 2),
+                "second_15_with_context_s": round(c_second_s, 2),
+                "rejected_because": [r for r in (c_first_reason, c_second_reason) if r],
+                "score": score_labels(compact, truth),
+                "resources": sampler.report(),
+            }
+            print(
+                f"  one letter per turn: {c_first_s:.1f} s and {c_second_s:.1f} s for 15 turns each, "
+                f"{results['speaker_labels_compact']['score']}"
+            )
             with ResourceSampler() as sampler:
                 cold, first, first_reason = ollama.label(args.speaker_model, turns[:15], [])
                 warm, second, second_reason = ollama.label(
@@ -958,7 +1246,7 @@ def main() -> None:
                 "score": score_labels(predicted, truth),
                 "resources": sampler.report(),
             }
-            print(f"  first batch (includes loading) {cold:.1f} s, second batch {warm:.1f} s")
+            print(f"  object per turn (previous format): {cold:.1f} s and {warm:.1f} s for 15 turns each")
             ollama.unload(args.speaker_model)
             to_soap = ollama.tiny(soap_model)
             back = ollama.tiny(args.speaker_model)
@@ -966,24 +1254,14 @@ def main() -> None:
             results["model_switch_s"] = {"load_3b": round(to_soap, 2), "switch_back_to_1_5b": round(back, 2)}
             print(f"  loading the 3B model {to_soap:.1f} s, switching back to 1.5B {back:.1f} s")
 
-            section("F. Live simulation with speaker labelling at the same time")
+            section(
+                f"F. Pause-cut blocks with {results['live_model']} and speaker labelling at the same time"
+            )
             server = WhisperServer(binary, live_model, threads)
             try:
                 server.start()
-                best = min(results["live"], key=lambda r: (r["inference_s"] or {}).get("p90", 99))
-                run, _state = live_simulation(
-                    server,
-                    audio,
-                    step_s=best["step_s"],
-                    reduced_ctx=best["audio_ctx"] == "matched",
-                    labeller=Labeller(ollama, args.speaker_model),
-                )
-                results["concurrent"] = asdict(run)
-                print(
-                    f"    request {run.inference_s['median']:.2f} s, confirmed "
-                    f"{run.final_delay_s['median'] if run.final_delay_s else float('nan'):.1f} s after speech, "
-                    f"most behind {run.max_behind_s:.1f} s, lowest free memory "
-                    f"{run.resources.get('mem_available_min_mb')} MB, labelling {run.labelling}"
+                results["concurrent_blocks"] = run_blocks(
+                    server, audio, results["live_model"], False, Labeller(ollama, args.speaker_model)
                 )
             finally:
                 server.stop()
