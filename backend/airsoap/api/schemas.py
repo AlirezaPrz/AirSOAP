@@ -22,6 +22,7 @@ class HealthResponse(CamelModel):
     recorder_available: bool
     transcriber: str
     transcriber_reachable: bool
+    transcriber_loaded: bool
     recording: RecordingState
 
 

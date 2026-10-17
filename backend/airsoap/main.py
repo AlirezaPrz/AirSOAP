@@ -7,19 +7,26 @@ Run with ``python -m airsoap`` (binds to AIRSOAP_HOST, 127.0.0.1 by default) or
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 
 from . import __version__
 from .api.deps import Services
 from .api.routes import health_router, recording_router, transcription_router
-from .config import RecorderKind, Settings, TranscriberKind
+from .config import RecorderKind, Settings, TranscriberKind, WhisperLifecycle
 from .errors import ApiError, api_error_handler
 from .jobs import JobManager
 from .recording import ArecordRecorder, MockRecorder, Recorder
 from .sessions import RecordingSessions
 from .storage import WorkDir
-from .transcription import MockTranscriber, Transcriber, WhisperServerTranscriber
+from .transcription import (
+    ManagedWhisperTranscriber,
+    MockTranscriber,
+    Transcriber,
+    WhisperProcessManager,
+    WhisperServerTranscriber,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +43,28 @@ def build_recorder(settings: Settings) -> Recorder:
 
 def build_transcriber(settings: Settings) -> Transcriber:
     if settings.resolved_transcriber is TranscriberKind.WHISPER_SERVER:
-        return WhisperServerTranscriber(
+        client = WhisperServerTranscriber(
             base_url=settings.whisper_url,
             timeout_seconds=settings.whisper_timeout_seconds,
             language=settings.whisper_language,
         )
+        if settings.whisper_lifecycle is WhisperLifecycle.ON_DEMAND:
+            parts = urlsplit(settings.whisper_url)
+            assert settings.whisper_server_path and settings.whisper_model_path  # noqa: S101 - validated
+            assert parts.hostname and parts.port  # noqa: S101 - validated
+            manager = WhisperProcessManager(
+                binary=settings.whisper_server_path,
+                model=settings.whisper_model_path,
+                host=parts.hostname,
+                port=parts.port,
+                threads=settings.whisper_threads,
+                language=settings.whisper_language,
+                idle_seconds=settings.whisper_idle_seconds,
+                startup_timeout=settings.whisper_startup_timeout_seconds,
+                probe=client.is_reachable,
+            )
+            return ManagedWhisperTranscriber(client=client, manager=manager)
+        return client
     return MockTranscriber(delay_seconds=settings.mock_transcribe_seconds)
 
 
@@ -81,6 +105,7 @@ def create_app(
         finally:
             await services.sessions.close()
             await jobs.close()
+            await transcriber.close()
             storage.sweep()
 
     app = FastAPI(title="AirSOAP backend", version=__version__, lifespan=lifespan)

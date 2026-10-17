@@ -39,3 +39,9 @@ class MockTranscriber:
 
     async def is_reachable(self) -> bool:
         return True
+
+    def is_loaded(self) -> bool:
+        return False
+
+    async def close(self) -> None:
+        return None

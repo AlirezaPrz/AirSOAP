@@ -32,9 +32,15 @@ class WhisperServerTranscriber:
         self._timeout = httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT_SECONDS)
         self._language = language
         self._transport = transport
+        self._loaded = False
 
     def _client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(base_url=self._base_url, timeout=timeout, transport=self._transport)
+        return httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=timeout,
+            transport=self._transport,
+            trust_env=False,  # audio stays on this device: never route through an environment proxy
+        )
 
     async def transcribe(self, path: Path, duration_ms: int) -> TranscriptResult:
         audio = await asyncify(path.read_bytes)()
@@ -80,6 +86,15 @@ class WhisperServerTranscriber:
             async with self._client(REACHABILITY_TIMEOUT_SECONDS) as client:
                 response = await client.get("/")
         except httpx.HTTPError:
+            self._loaded = False
             return False
         # whisper-server answers 503 while the model is still loading.
-        return response.status_code < 500
+        self._loaded = response.status_code < 500
+        return self._loaded
+
+    def is_loaded(self) -> bool:
+        # Result of the latest reachability check; an always-on server keeps its model loaded.
+        return self._loaded
+
+    async def close(self) -> None:
+        return None

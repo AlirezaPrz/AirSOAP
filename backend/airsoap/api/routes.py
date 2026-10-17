@@ -21,11 +21,13 @@ transcription_router = APIRouter(prefix="/api/transcriptions", tags=["transcript
 
 @health_router.get("/health")
 async def health(services: ServicesDep) -> HealthResponse:
+    reachable = await services.transcriber.is_reachable()
     return HealthResponse(
         recorder=services.recorder.name,
         recorder_available=services.recorder.is_available(),
         transcriber=services.transcriber.name,
-        transcriber_reachable=await services.transcriber.is_reachable(),
+        transcriber_reachable=reachable,
+        transcriber_loaded=services.transcriber.is_loaded(),
         recording=services.sessions.state,
     )
 

@@ -25,6 +25,11 @@ class RecorderKind(StrEnum):
     ARECORD = "arecord"
 
 
+class WhisperLifecycle(StrEnum):
+    EXTERNAL = "external"  # whisper-server is run separately (e.g. its own systemd service)
+    ON_DEMAND = "on-demand"  # the backend starts it for a job and stops it afterwards
+
+
 class TranscriberKind(StrEnum):
     AUTO = "auto"
     MOCK = "mock"
@@ -62,6 +67,13 @@ class Settings(BaseSettings):
     whisper_timeout_seconds: float = Field(default=900, gt=0)
     whisper_language: str = Field(default="en", pattern=r"^[a-z]{2}$")
     allow_remote_whisper: bool = False
+    whisper_lifecycle: WhisperLifecycle = WhisperLifecycle.EXTERNAL
+    # Used only with whisper_lifecycle=on-demand:
+    whisper_server_path: Path | None = None
+    whisper_model_path: Path | None = None
+    whisper_threads: int = Field(default=4, ge=1, le=64)
+    whisper_idle_seconds: float = Field(default=20, ge=0)
+    whisper_startup_timeout_seconds: float = Field(default=90, gt=0)
 
     job_ttl_seconds: int = Field(default=600, ge=10)
     max_pending_jobs: int = Field(default=4, ge=1)
@@ -74,6 +86,13 @@ class Settings(BaseSettings):
     def _check_device(cls, value: str) -> str:
         if not _DEVICE_PATTERN.fullmatch(value):
             raise ValueError("arecord device must be an ALSA name such as plughw:CARD=MICROPHONE,DEV=0")
+        return value
+
+    @field_validator("whisper_server_path", "whisper_model_path")
+    @classmethod
+    def _absolute_paths(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("whisper paths must be absolute")
         return value
 
     @field_validator("work_dir")
@@ -90,6 +109,13 @@ class Settings(BaseSettings):
             raise ValueError("whisper_url must be an http(s) URL")
         if parts.hostname not in LOOPBACK_HOSTS and not self.allow_remote_whisper:
             raise ValueError("whisper_url must point at this device (127.0.0.1); audio never leaves it")
+        if self.whisper_lifecycle is WhisperLifecycle.ON_DEMAND:
+            if parts.hostname not in LOOPBACK_HOSTS or parts.port is None:
+                raise ValueError(
+                    "on-demand whisper-server needs a loopback whisper_url with an explicit port"
+                )
+            if self.whisper_server_path is None or self.whisper_model_path is None:
+                raise ValueError("on-demand whisper-server needs whisper_server_path and whisper_model_path")
         return self
 
     @cached_property
