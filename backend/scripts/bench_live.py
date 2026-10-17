@@ -209,6 +209,7 @@ class ResourceSampler:
         self.mem_available_mb: list[float] = []
         self.cpu_percent: list[float] = []
         self.temperature_c: list[float] = []
+        self.fan_rpm: list[int] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -233,6 +234,9 @@ class ResourceSampler:
                 self.temperature_c.append(
                     int(Path("/sys/class/thermal/thermal_zone0/temp").read_text()) / 1000
                 )
+            for fan in Path("/sys/devices/platform/cooling_fan").glob("hwmon/hwmon*/fan1_input"):
+                with contextlib.suppress(OSError, ValueError):
+                    self.fan_rpm.append(int(fan.read_text()))
             now = self._cpu_times()
             if last and now and now[0] > last[0]:
                 total, idle = now[0] - last[0], now[1] - last[1]
@@ -252,6 +256,8 @@ class ResourceSampler:
             "mem_available_min_mb": round(min(self.mem_available_mb)) if self.mem_available_mb else None,
             "cpu_percent_mean": round(statistics.mean(self.cpu_percent)) if self.cpu_percent else None,
             "temperature_max_c": round(max(self.temperature_c), 1) if self.temperature_c else None,
+            # None: no fan reading on this machine. 0 under load: the fan is not spinning.
+            "fan_rpm_max": max(self.fan_rpm) if self.fan_rpm else None,
         }
 
 
@@ -558,6 +564,24 @@ SPEAKER_SCHEMA = {
 }
 
 
+def rejection_reason(answer: object, ids: list[str]) -> str | None:
+    """Why an answer is unusable, as a fixed code (never the answer's text), or None if it is fine."""
+    if not isinstance(answer, dict) or not isinstance(answer.get("labels"), list):
+        return "no_labels_list"
+    labels = answer["labels"]
+    if len(labels) != len(ids):
+        return f"count_{len(labels)}_of_{len(ids)}"
+    got = [entry.get("id") if isinstance(entry, dict) else None for entry in labels]
+    if got != ids:
+        return "ids_reordered" if sorted(map(str, got)) == sorted(ids) else "ids_changed"
+    for entry in labels:
+        if entry.get("speaker") not in {"clinician", "patient", "unknown"}:
+            return "bad_speaker"
+        if entry.get("confidence") not in {"low", "medium", "high"}:
+            return "bad_confidence"
+    return None
+
+
 def validate_labels(answer: object, ids: list[str]) -> list[str] | None:
     """The labels in order, low confidence turned into unknown, or None if the answer is unusable."""
     if not isinstance(answer, dict) or not isinstance(answer.get("labels"), list):
@@ -595,7 +619,8 @@ class Ollama:
 
     def label(
         self, model: str, turns: list[tuple[str, str]], earlier: list[tuple[str, str, str]]
-    ) -> tuple[float, list[str] | None]:
+    ) -> tuple[float, list[str] | None, str | None]:
+        """(seconds, labels or None, rejection reason or None)."""
         content = json.dumps(
             {
                 "earlier_turns": [{"id": i, "text": t, "speaker": s} for i, t, s in earlier],
@@ -603,27 +628,33 @@ class Ollama:
             }
         )
         began = time.monotonic()
-        response = self._post(
-            "/api/chat",
-            {
-                "model": model,
-                "stream": False,
-                "format": SPEAKER_SCHEMA,
-                "keep_alive": "5m",
-                "options": {"temperature": 0, "num_ctx": 4096},
-                "messages": [
-                    {"role": "system", "content": SPEAKER_SYSTEM},
-                    {"role": "user", "content": content},
-                ],
-            },
-            600,
-        )
+        try:
+            response = self._post(
+                "/api/chat",
+                {
+                    "model": model,
+                    "stream": False,
+                    "format": SPEAKER_SCHEMA,
+                    "keep_alive": "5m",
+                    "options": {"temperature": 0, "num_ctx": 4096},
+                    "messages": [
+                        {"role": "system", "content": SPEAKER_SYSTEM},
+                        {"role": "user", "content": content},
+                    ],
+                },
+                600,
+            )
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            return time.monotonic() - began, None, f"request_failed_{type(exc).__name__}"
         took = time.monotonic() - began
+        if response.get("done_reason") == "length":
+            return took, None, "truncated"
         try:
             answer = json.loads(response.get("message", {}).get("content", ""))
         except ValueError:
-            return took, None
-        return took, validate_labels(answer, [i for i, _ in turns])
+            return took, None, "not_json"
+        ids = [i for i, _ in turns]
+        return took, validate_labels(answer, ids), rejection_reason(answer, ids)
 
     def tiny(self, model: str) -> float:
         began = time.monotonic()
@@ -661,6 +692,7 @@ class Labeller:
         self.done = 0
         self.times: list[float] = []
         self.invalid = 0
+        self.reasons: list[str] = []
         self._busy = threading.Lock()
         self._threads: list[threading.Thread] = []
 
@@ -675,16 +707,23 @@ class Labeller:
 
     def _run(self, turns: list[tuple[str, str]]) -> None:
         with self._busy:
-            took, labels = self.ollama.label(self.model, turns, [])
+            took, labels, reason = self.ollama.label(self.model, turns, [])
             self.times.append(took)
             self.invalid += labels is None
+            if reason:
+                self.reasons.append(reason)
 
     def finish(self) -> None:
         for thread in self._threads:
             thread.join(timeout=600)
 
     def report(self) -> dict:
-        return {"batches": len(self.times), "invalid": self.invalid, "seconds": summarize(self.times)}
+        return {
+            "batches": len(self.times),
+            "invalid": self.invalid,
+            "rejected_because": self.reasons,
+            "seconds": summarize(self.times),
+        }
 
 
 # --- the benchmark -------------------------------------------------------------------------------
@@ -752,6 +791,13 @@ def recommend(results: dict) -> list[str]:
                 "Run speaker labelling after the recording stops: during recording it slowed live text "
                 f"by {slower:.1f} s or left too little memory ({memory} MB free at the lowest)."
             )
+    base = results.get("whole_file_live_model")
+    final = results.get("final")
+    if base and final:
+        advice.append(
+            f"Accuracy on the whole file: {results['live_model']} {base['wer']:.0%} word errors in {base['seconds']:.0f} s, "
+            f"{results['final_model']} {final['wer']:.0%} in {final['seconds']:.0f} s."
+        )
     labels = results.get("speaker_labels")
     if labels and labels.get("score"):
         score = labels["score"]
@@ -771,6 +817,12 @@ def main() -> None:
     )
     parser.add_argument("--env-file", type=Path, default=ENV_FILE)
     parser.add_argument("--speaker-model", default=SPEAKER_MODEL)
+    parser.add_argument(
+        "--live-model",
+        type=Path,
+        help="Whisper model for the live preview, e.g. ~/src/whisper.cpp/models/ggml-base.en.bin "
+        "(default: the env file's model). The final pass always uses the env file's model.",
+    )
     parser.add_argument("--quick", action="store_true", help="fewer window sizes and one live setting")
     parser.add_argument("--skip-qwen", action="store_true", help="transcription only")
     parser.add_argument(
@@ -788,6 +840,9 @@ def main() -> None:
     ollama = Ollama(env.get("AIRSOAP_OLLAMA_URL", "http://127.0.0.1:11434"))
     soap_model = env.get("AIRSOAP_OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
+    live_model = str(args.live_model.expanduser()) if args.live_model else model
+    if not Path(live_model).is_file():
+        sys.exit(f"No Whisper model at {live_model}")
     audio = Audio.load(args.audio)
     if subprocess.run(["pgrep", "-x", "whisper-server"], capture_output=True).returncode == 0:  # noqa: S607
         print(
@@ -798,17 +853,22 @@ def main() -> None:
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
         "audio_seconds": round(audio.duration_ms / 1000, 1),
         "threads": threads,
+        "live_model": Path(live_model).name,
+        "final_model": Path(model).name,
         "throttled_before": throttled(),
     }
-    print(f"AirSOAP live-transcription benchmark: {results['audio_seconds']} s of audio, {threads} threads")
+    print(
+        f"AirSOAP live-transcription benchmark: {results['audio_seconds']} s of audio, {threads} threads, "
+        f"live model {results['live_model']}, final model {results['final_model']}"
+    )
 
     if not args.skip_qwen:
         for name in (soap_model, args.speaker_model):
             ollama.unload(name)  # whisper-server gets the memory, as the backend's gate would arrange
 
-    server = WhisperServer(binary, model, threads)
+    server = WhisperServer(binary, live_model, threads)
     try:
-        section("A. Loading the Whisper model")
+        section(f"A. Loading the live Whisper model ({results['live_model']})")
         results["whisper_load_s"] = round(server.start(), 2)
         print(f"  ready in {results['whisper_load_s']:.1f} s")
 
@@ -844,7 +904,19 @@ def main() -> None:
                 f"CPU {run.resources.get('cpu_percent_mean')}%, {run.resources.get('temperature_max_c')} °C"
             )
 
-        section("D. Final whole-file pass")
+        if live_model != model:
+            section(f"D0. Whole file with the live model ({results['live_model']}), for comparison")
+            took, segments = server.transcribe(audio.samples)
+            results["whole_file_live_model"] = {
+                "seconds": round(took, 2),
+                "wer": round(word_error_rate(reference_text(), " ".join(s.text for s in segments)), 3),
+            }
+            print(f"  {took:.1f} s, word errors {results['whole_file_live_model']['wer']:.0%}")
+            server.stop()
+            server = WhisperServer(binary, model, threads)
+            results["final_model_load_s"] = round(server.start(), 2)
+
+        section(f"D. Final whole-file pass ({results['final_model']})")
         took, segments = server.transcribe(audio.samples)
         final_text = " ".join(s.text for s in segments)
         results["final"] = {
@@ -871,8 +943,8 @@ def main() -> None:
             truth = [speaker for speaker, _ in DIALOGUE]
             turns = [(f"t{i}", text) for i, (_, text) in enumerate(DIALOGUE)]
             with ResourceSampler() as sampler:
-                cold, first = ollama.label(args.speaker_model, turns[:15], [])
-                warm, second = ollama.label(
+                cold, first, first_reason = ollama.label(args.speaker_model, turns[:15], [])
+                warm, second, second_reason = ollama.label(
                     args.speaker_model,
                     turns[15:],
                     [(i, t, s) for (i, t), s in zip(turns[:15], first or ["unknown"] * 15, strict=True)],
@@ -882,6 +954,7 @@ def main() -> None:
                 "cold_s": round(cold, 2),
                 "warm_s": round(warm, 2),
                 "valid_answers": int(first is not None) + int(second is not None),
+                "rejected_because": [r for r in (first_reason, second_reason) if r],
                 "score": score_labels(predicted, truth),
                 "resources": sampler.report(),
             }
@@ -894,7 +967,7 @@ def main() -> None:
             print(f"  loading the 3B model {to_soap:.1f} s, switching back to 1.5B {back:.1f} s")
 
             section("F. Live simulation with speaker labelling at the same time")
-            server = WhisperServer(binary, model, threads)
+            server = WhisperServer(binary, live_model, threads)
             try:
                 server.start()
                 best = min(results["live"], key=lambda r: (r["inference_s"] or {}).get("p90", 99))

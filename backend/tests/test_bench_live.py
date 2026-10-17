@@ -128,6 +128,22 @@ def test_speaker_labels_are_validated_strictly() -> None:
         assert bench.validate_labels(bad, ids) is None
 
 
+def test_rejected_answers_say_why_without_their_text() -> None:
+    ids = ["t0", "t1"]
+    row = {"speaker": "patient", "confidence": "high"}
+    assert bench.rejection_reason({"labels": [{"id": "t0", **row}, {"id": "t1", **row}]}, ids) is None
+    assert bench.rejection_reason({"labels": [{"id": "t0", **row}]}, ids) == "count_1_of_2"
+    assert (
+        bench.rejection_reason({"labels": [{"id": "t1", **row}, {"id": "t0", **row}]}, ids) == "ids_reordered"
+    )
+    assert (
+        bench.rejection_reason({"labels": [{"id": "s0", **row}, {"id": "s1", **row}]}, ids) == "ids_changed"
+    )
+    bad = {"labels": [{"id": "t0", **row}, {"id": "t1", "speaker": "nurse", "confidence": "high"}]}
+    assert bench.rejection_reason(bad, ids) == "bad_speaker"
+    assert bench.rejection_reason(["not", "a", "dict"], ids) == "no_labels_list"
+
+
 def test_label_scoring_separates_unknown_from_wrong() -> None:
     score = bench.score_labels(["clinician", "unknown", "clinician"], ["clinician", "patient", "patient"])
     assert score == {"turns": 3, "labelled": 2, "unknown": 1, "accuracy_of_labelled": 0.5, "wrong": 1}
