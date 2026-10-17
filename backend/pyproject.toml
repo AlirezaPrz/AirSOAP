@@ -30,7 +30,10 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP", "ASYNC", "FAST", "S", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
+# SQL statements read better unbroken.
+"airsoap/auth/*.py" = ["E501"]
+"airsoap/db/*.py" = ["E501"]
 # Prompt templates are prose, not code: let their lines run long.
 "airsoap/ai/tasks/*.py" = ["E501", "SIM905"]
 # Polling loops are fine in tests.
-"tests/**" = ["S101", "S603", "S108", "ASYNC109", "ASYNC110", "ASYNC240"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S108", "ASYNC109", "ASYNC110", "ASYNC240"]

@@ -12,11 +12,18 @@ from helpers import (
 from airsoap.transcription import TranscriptionError
 
 
+def test_public_health_reveals_nothing_but_liveness(settings):
+    with running_app(settings, login_as=None) as client:
+        response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_health_reports_components_and_state(settings):
     with running_app(
         settings, recorder=FakeRecorder(), transcriber=FakeTranscriber(reachable=False)
     ) as client:
-        response = client.get("/api/health")
+        response = client.get("/api/system/status")
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
@@ -33,7 +40,7 @@ def test_health_reports_components_and_state(settings):
 
 def test_health_defaults_to_mock_services(settings):
     with running_app(settings) as client:
-        body = client.get("/api/health").json()
+        body = client.get("/api/system/status").json()
     assert (body["recorder"], body["transcriber"]) == ("mock", "mock")
 
 
@@ -41,14 +48,14 @@ def test_record_and_transcribe_whole_recording(settings):
     transcriber = FakeTranscriber()
     with running_app(settings, recorder=FakeRecorder(duration_ms=4200), transcriber=transcriber) as client:
         started = client.post("/api/recording/start").json()
-        assert client.get("/api/health").json()["recording"] == "recording"
+        assert client.get("/api/system/status").json()["recording"] == "recording"
 
         stopped = client.post("/api/recording/stop", json={"recordingId": started["recordingId"]}).json()
         assert stopped["recordingId"] == started["recordingId"]
         assert stopped["durationMs"] == 4200
 
         body = wait_for_status(client, stopped["jobId"], {"completed"})
-        assert client.get("/api/health").json()["recording"] == "idle"
+        assert client.get("/api/system/status").json()["recording"] == "idle"
 
     # One request for the whole file, not chunks.
     assert len(transcriber.calls) == 1
@@ -82,7 +89,7 @@ def test_stop_with_wrong_recording_id_keeps_recording(settings):
         started = client.post("/api/recording/start").json()
         wrong = client.post("/api/recording/stop", json={"recordingId": "f" * 32})
         assert wrong.status_code == 409
-        assert client.get("/api/health").json()["recording"] == "recording"
+        assert client.get("/api/system/status").json()["recording"] == "recording"
         ok = client.post("/api/recording/stop", json={"recordingId": started["recordingId"]})
     assert ok.status_code == 200
 
@@ -103,7 +110,7 @@ def test_failed_start_leaves_no_file_and_allows_retry(settings):
             "message": "The microphone could not be opened.",
             "retryable": False,
         }
-        assert client.get("/api/health").json()["recording"] == "idle"
+        assert client.get("/api/system/status").json()["recording"] == "idle"
         assert audio_files(settings) == []
 
         recorder.fail_on_start = False
@@ -119,7 +126,7 @@ def test_failed_stop_deletes_audio_and_resets(settings):
         response = client.post("/api/recording/stop", json={"recordingId": started["recordingId"]})
         assert response.status_code == 500
         assert response.json()["error"]["code"] == "RECORDING_FAILED"
-        assert client.get("/api/health").json()["recording"] == "idle"
+        assert client.get("/api/system/status").json()["recording"] == "idle"
         assert audio_files(settings) == []
 
 
@@ -141,7 +148,7 @@ def test_cancel_recording_deletes_audio_without_transcribing(settings):
         response = client.post("/api/recording/cancel", json={"recordingId": started["recordingId"]})
         assert response.status_code == 200
         assert response.json() == {"recordingId": started["recordingId"], "status": "cancelled"}
-        assert client.get("/api/health").json()["recording"] == "idle"
+        assert client.get("/api/system/status").json()["recording"] == "idle"
         assert audio_files(settings) == []
     assert recorder.processes[0].aborted
     assert transcriber.calls == []

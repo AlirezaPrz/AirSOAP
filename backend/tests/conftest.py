@@ -18,6 +18,12 @@ def settings(tmp_path: Path) -> Settings:
         recorder="mock",
         transcriber="mock",
         mock_transcribe_seconds=0,
+        # An isolated database per test; never the developer's or the Pi's real one.
+        database_path=tmp_path / "state" / "airsoap.db",
+        allow_ephemeral_database=True,
+        cookie_secure=False,  # TestClient talks plain HTTP
+        allowed_origins="http://testserver",
+        session_sweep_seconds=3600,
     )
 
 
@@ -37,3 +43,14 @@ def _never_reach_a_live_ollama_or_remote_host(monkeypatch: pytest.MonkeyPatch) -
         return real_connect(self, address)  # type: ignore[arg-type]
 
     monkeypatch.setattr(socket.socket, "connect", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_a_real_database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Any Settings() built without an explicit database path points into this test's temp dir,
+    so no test can create or change the developer's or the Pi's real account database."""
+    from airsoap import config
+
+    monkeypatch.setattr(config, "default_database_path", lambda: tmp_path / "default-db" / "airsoap.db")
+    monkeypatch.delenv("AIRSOAP_DATABASE_PATH", raising=False)
+    monkeypatch.setenv("AIRSOAP_ALLOW_EPHEMERAL_DATABASE", "true")

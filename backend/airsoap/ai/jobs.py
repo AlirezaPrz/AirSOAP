@@ -47,6 +47,7 @@ class AiJob:
     result: BaseModel | None = None
     error: JobError | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
+    owner_id: str | None = None
 
 
 class AiJobManager:
@@ -86,7 +87,9 @@ class AiJobManager:
                 self._finish(job, JobStatus.CANCELLED)
         self._jobs.clear()
 
-    def submit(self, kind: AiJobKind, request: SoapRequest | ClinicalReviewRequest) -> AiJob:
+    def submit(
+        self, kind: AiJobKind, request: SoapRequest | ClinicalReviewRequest, owner_id: str | None = None
+    ) -> AiJob:
         if self._queue is None:
             raise RuntimeError("AiJobManager.start() was not called")
         self._purge_expired()
@@ -95,22 +98,25 @@ class AiJobManager:
             raise ApiError(
                 503, "AI_QUEUE_FULL", "The AI model is busy. Please try again shortly.", retryable=True
             )
-        job = AiJob(id=uuid.uuid4().hex, kind=kind, created_at=self._clock(), request=request)
+        job = AiJob(
+            id=uuid.uuid4().hex, kind=kind, created_at=self._clock(), request=request, owner_id=owner_id
+        )
         self._jobs[job.id] = job
         self._queue.put_nowait(job.id)
         logger.info("ai job=%s kind=%s queued", job.id, kind.value)
         return job
 
-    def get(self, job_id: str) -> AiJob:
+    def get(self, job_id: str, owner_id: str | None = None) -> AiJob:
+        """Another account's job is reported as not found, so its existence is not revealed."""
         self._purge_expired()
         job = self._jobs.get(job_id)
-        if job is None:
+        if job is None or (owner_id is not None and job.owner_id != owner_id):
             raise ApiError(404, "JOB_NOT_FOUND", "This AI job does not exist or has expired.")
         return job
 
-    async def cancel(self, job_id: str) -> AiJob:
+    async def cancel(self, job_id: str, owner_id: str | None = None) -> AiJob:
         """Idempotent. Cancelling a running job aborts its request to the model."""
-        job = self.get(job_id)
+        job = self.get(job_id, owner_id)
         if job.task is not None and not job.task.done():
             job.task.cancel()
             await asyncio.wait({job.task})
@@ -118,11 +124,21 @@ class AiJobManager:
             self._finish(job, JobStatus.CANCELLED)
         return job
 
-    async def delete(self, job_id: str) -> None:
-        """Cancel if still running, then forget the job and its result."""
-        if job_id in self._jobs:
-            await self.cancel(job_id)
-            self._jobs.pop(job_id, None)
+    async def delete(self, job_id: str, owner_id: str | None = None) -> None:
+        """Cancel if still running, then forget the job and its result. Silent for unknown or foreign jobs."""
+        job = self._jobs.get(job_id)
+        if job is None or (owner_id is not None and job.owner_id != owner_id):
+            return
+        await self.cancel(job_id)
+        self._jobs.pop(job_id, None)
+
+    def owners(self) -> set[str]:
+        return {job.owner_id for job in self._jobs.values() if job.owner_id is not None}
+
+    async def discard_owner(self, owner_id: str) -> None:
+        """Cancel this account's AI jobs and drop their results, e.g. after sign-out or expiry."""
+        for job_id in [job.id for job in self._jobs.values() if job.owner_id == owner_id]:
+            await self.delete(job_id)
 
     async def _run(self) -> None:
         assert self._queue is not None  # noqa: S101

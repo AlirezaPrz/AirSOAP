@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from argon2 import PasswordHasher, profiles
 from fastapi.testclient import TestClient
 
 from airsoap.audio import synth_tone, write_wav
@@ -116,9 +117,50 @@ class FakeTranscriber:
         return None
 
 
+# Argon2 at its cheapest: fine for tests, never used by the application itself.
+FAST_HASHER = PasswordHasher.from_parameters(profiles.CHEAPEST)
+PASSWORD = "synthetic-test-password-1"
+# What the browser app sends with every request (see airsoap/auth/csrf.py).
+APP_HEADERS = {"Origin": "http://testserver", "X-AirSOAP-Request": "1"}
+CLINICIAN = "clinician@example.test"
+
+
+def add_user(
+    client: TestClient,
+    email: str,
+    roles: tuple[str, ...] = ("clinician",),
+    *,
+    password: str = PASSWORD,
+    must_change_password: bool = False,
+    name: str = "Test User",
+):
+    return client.app.state.services.auth.operator_create_user(
+        email, name, password, roles, must_change_password=must_change_password
+    )
+
+
+def sign_in(client: TestClient, email: str, password: str = PASSWORD, role: str | None = None):
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    if role is not None and response.json()["activeRole"] is None:
+        response = client.post("/api/auth/select-role", json={"role": role})
+        assert response.status_code == 200, response.text
+    return response
+
+
 @contextmanager
-def running_app(settings: Settings, **overrides: object) -> Iterator[TestClient]:
-    with TestClient(create_app(settings, **overrides)) as client:
+def running_app(
+    settings: Settings, *, login_as: tuple[str, ...] | None = ("clinician",), **overrides: object
+) -> Iterator[TestClient]:
+    """The app with a fresh database, signed in as a synthetic account with ``login_as`` roles.
+
+    ``login_as=None`` stays signed out."""
+    overrides.setdefault("password_hasher", FAST_HASHER)
+    app = create_app(settings, **overrides)  # type: ignore[arg-type]
+    with TestClient(app, headers=APP_HEADERS) as client:
+        if login_as is not None:
+            add_user(client, CLINICIAN, login_as, name="Dr Test Clinician")
+            sign_in(client, CLINICIAN, role=login_as[0])
         yield client
 
 

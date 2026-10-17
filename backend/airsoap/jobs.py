@@ -59,6 +59,7 @@ class Job:
     result: TranscriptResult | None = None
     error: JobError | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
+    owner_id: str | None = None
 
     @property
     def progress(self) -> int | None:
@@ -110,7 +111,7 @@ class JobManager:
                 self._finish(job, JobStatus.CANCELLED)
         self._jobs.clear()
 
-    def submit(self, audio_path: Path, audio_duration_ms: int) -> Job:
+    def submit(self, audio_path: Path, audio_duration_ms: int, owner_id: str | None = None) -> Job:
         """Queue a recording. The caller still owns (and must delete) the file if this raises."""
         if self._queue is None:
             raise RuntimeError("JobManager.start() was not called")
@@ -125,22 +126,24 @@ class JobManager:
             audio_path=audio_path,
             audio_duration_ms=audio_duration_ms,
             created_at=self._clock(),
+            owner_id=owner_id,
         )
         self._jobs[job.id] = job
         self._queue.put_nowait(job.id)
         logger.info("job=%s queued audio_ms=%d", job.id, audio_duration_ms)
         return job
 
-    def get(self, job_id: str) -> Job:
+    def get(self, job_id: str, owner_id: str | None = None) -> Job:
+        """Another account's job is reported as not found, so its existence is not revealed."""
         self._purge_expired()
         job = self._jobs.get(job_id)
-        if job is None:
+        if job is None or (owner_id is not None and job.owner_id != owner_id):
             raise ApiError(404, "JOB_NOT_FOUND", "This transcription job does not exist or has expired.")
         return job
 
-    async def cancel(self, job_id: str) -> Job:
+    async def cancel(self, job_id: str, owner_id: str | None = None) -> Job:
         """Idempotent: cancelling a finished job returns it unchanged."""
-        job = self.get(job_id)
+        job = self.get(job_id, owner_id)
         if job.status is JobStatus.QUEUED:
             self._finish(job, JobStatus.CANCELLED)
         elif job.status is JobStatus.PROCESSING and job.task is not None:
@@ -149,6 +152,16 @@ class JobManager:
             if job.status not in FINISHED:
                 self._finish(job, JobStatus.CANCELLED)
         return job
+
+    def owners(self) -> set[str]:
+        return {job.owner_id for job in self._jobs.values() if job.owner_id is not None}
+
+    async def discard_owner(self, owner_id: str) -> None:
+        """Cancel this account's jobs and drop their transcripts, e.g. after sign-out or expiry."""
+        for job in [job for job in self._jobs.values() if job.owner_id == owner_id]:
+            if job.status not in FINISHED:
+                await self.cancel(job.id)
+            self._jobs.pop(job.id, None)
 
     async def _run(self) -> None:
         assert self._queue is not None  # noqa: S101

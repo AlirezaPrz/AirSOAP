@@ -4,12 +4,16 @@ Run with ``python -m airsoap`` (binds to AIRSOAP_HOST, 127.0.0.1 by default) or
 ``uvicorn --factory airsoap.main:create_app --host 127.0.0.1``.
 """
 
+import asyncio
+import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from argon2 import PasswordHasher
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -19,10 +23,15 @@ from .ai.gate import ModelGate
 from .ai.jobs import AiJobManager
 from .ai.mock import MockAiClient
 from .ai.ollama import OllamaClient
+from .api.admin_routes import router as admin_router
 from .api.ai_routes import router as ai_router
+from .api.auth_routes import router as auth_router
 from .api.deps import Services
-from .api.routes import health_router, recording_router, transcription_router
+from .api.routes import health_router, recording_router, system_router, transcription_router
+from .auth.passwords import Passwords
+from .auth.service import AuthService
 from .config import AiKind, RecorderKind, Settings, TranscriberKind, WhisperLifecycle
+from .db import Database
 from .errors import ApiError, api_error_handler
 from .jobs import JobManager
 from .recording import ArecordRecorder, MockRecorder, Recorder
@@ -37,6 +46,43 @@ from .transcription import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The built frontend loads only its own files; nothing may frame it.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    if request.url.path.startswith("/api/"):
+        # Clinical results and temporary passwords must never be cached by the browser or a proxy.
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+async def _sweep_lapsed_sessions(services: Services, interval: float) -> None:
+    """End the recording and jobs of accounts that no longer have a live session (expired or disabled)."""
+    while True:
+        await asyncio.sleep(interval)
+        owners = (
+            {o for o in (services.sessions.active_owner,) if o}
+            | services.jobs.owners()
+            | services.ai_jobs.owners()
+        )
+        for owner in owners:
+            try:
+                live = await asyncio.to_thread(services.auth.user_has_live_session, owner)
+                if not live:
+                    await services.discard_owner(owner)
+            except Exception as exc:
+                logger.error("session sweep failed (%s)", type(exc).__name__)
 
 
 def build_recorder(settings: Settings) -> Recorder:
@@ -104,8 +150,18 @@ def create_app(
     recorder: Recorder | None = None,
     transcriber: Transcriber | None = None,
     ai_client: AiClient | None = None,
+    password_hasher: PasswordHasher | None = None,
+    auth_clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
+    """``password_hasher`` and ``auth_clock`` exist for tests (fast hashing, controlled time)."""
     settings = settings or Settings()
+    db = Database(settings.database_path)
+    auth = AuthService(
+        db=db,
+        settings=settings,
+        passwords=Passwords(password_hasher),
+        **({"clock": auth_clock} if auth_clock else {}),
+    )
     storage = WorkDir(settings.work_dir)
     recorder = recorder or build_recorder(settings)
     transcriber = transcriber or build_transcriber(settings)
@@ -134,19 +190,27 @@ def create_app(
         sessions=RecordingSessions(recorder=recorder, storage=storage, jobs=jobs),
         ai_client=ai_client,
         ai_jobs=ai_jobs,
+        db=db,
+        auth=auth,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        db.open()  # refuses unsafe paths and owners; applies migrations
+        auth.prune()
         storage.prepare()
         if removed := storage.sweep():
             logger.info("removed %d leftover audio file(s) from a previous run", removed)
         await jobs.start()
         await ai_jobs.start()
         logger.info("recorder=%s transcriber=%s ai=%s", recorder.name, transcriber.name, ai_client.name)
+        sweeper = asyncio.create_task(_sweep_lapsed_sessions(services, settings.session_sweep_seconds))
         try:
             yield
         finally:
+            sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sweeper
             await services.sessions.close()
             await jobs.close()
             await ai_jobs.close()
@@ -154,12 +218,25 @@ def create_app(
             await ai_client.close()
             await transcriber.close()
             storage.sweep()
+            db.close()
 
-    app = FastAPI(title="AirSOAP backend", version=__version__, lifespan=lifespan)
+    docs = settings.api_docs
+    app = FastAPI(
+        title="AirSOAP backend",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+    app.middleware("http")(security_headers)
     app.state.services = services
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(health_router)
+    app.include_router(auth_router)
+    app.include_router(admin_router)
+    app.include_router(system_router)
     app.include_router(recording_router)
     app.include_router(transcription_router)
     app.include_router(ai_router)

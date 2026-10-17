@@ -297,5 +297,5 @@ def test_logs_never_contain_transcript_note_or_model_output(settings, caplog):
 
 def test_health_reports_the_ai_service(settings):
     with running_app(settings, ai_client=FakeAiClient(ready=False)) as client:
-        body = client.get("/api/health").json()
+        body = client.get("/api/system/status").json()
     assert (body["ai"], body["aiReady"]) == ("fake-ai", False)

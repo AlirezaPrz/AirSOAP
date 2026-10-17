@@ -13,6 +13,14 @@ HexId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 
 
 class HealthResponse(CamelModel):
+    """Public liveness check. Deliberately reveals nothing else."""
+
+    status: Literal["ok"] = "ok"
+
+
+class SystemStatusResponse(CamelModel):
+    """Component status, for signed-in users only."""
+
     status: Literal["ok"] = "ok"
     recorder: str
     recorder_available: bool
