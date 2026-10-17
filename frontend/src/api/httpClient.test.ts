@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultApi } from '.'
 import { ApiRequestError, isCancellation } from './client'
-import { SOAP_PLACEHOLDER, createHttpApi } from './httpClient'
+import { createHttpApi } from './httpClient'
 import { isMockApi } from './mockClient'
 import type { TranscriptionJobResponse } from './types'
 
@@ -81,8 +81,8 @@ describe('createHttpApi', () => {
     expect(progress).toEqual([0, null, 1])
     expect(transcript.durationMs).toBe(4200)
     expect(transcript.segments).toEqual([
-      { id: 'seg-1', speaker: 'unassigned', startMs: 0, endMs: 2000, text: 'Hello there.' },
-      { id: 'seg-2', speaker: 'unassigned', startMs: 2000, endMs: 4200, text: 'How are you?' },
+      { id: 'seg-1', speaker: 'unknown', startMs: 0, endMs: 2000, text: 'Hello there.' },
+      { id: 'seg-2', speaker: 'unknown', startMs: 2000, endMs: 4200, text: 'How are you?' },
     ])
     // The encounter ID (and anything about the patient) never goes to the backend.
     expect(backend.calls[0]).toEqual({ method: 'POST', path: '/api/recording/start', body: undefined })
@@ -172,13 +172,109 @@ describe('createHttpApi', () => {
     expect(backend.calls.length).toBe(before)
   })
 
-  it('fills every SOAP field with the Phase 4 placeholder', async () => {
-    const api = createHttpApi({ fetch: vi.fn() })
-    const { soap } = await api.generateSoap({
-      transcript: { segments: [], language: 'en', durationMs: 0 },
-      context: { patientAge: 35, encounterType: 'acute' },
+  describe('AI tasks', () => {
+    const segments = [
+      { id: 'seg-1', speaker: 'clinician' as const, text: 'What brings you in today?' },
+      { id: 'seg-2', speaker: 'patient' as const, text: 'A sore throat.' },
+    ]
+    const context = { patientAge: 35, encounterType: 'acute' as const }
+    const soap = { subjective: 'S', objective: 'O', assessment: 'A', plan: 'P' }
+    const AI_JOB = 'c'.repeat(32)
+    const aiJob = (overrides: object) => ({
+      jobId: AI_JOB,
+      kind: 'soap',
+      status: 'processing',
+      soapResult: null,
+      reviewResult: null,
+      error: null,
+      ...overrides,
     })
-    expect(Object.values(soap)).toEqual([SOAP_PLACEHOLDER, SOAP_PLACEHOLDER, SOAP_PLACEHOLDER, SOAP_PLACEHOLDER])
+    const aiRoutes = (result: object | object[]) => ({
+      'POST /api/ai/soap': () => [202, { jobId: AI_JOB, kind: 'soap' }] as [number, unknown],
+      'POST /api/ai/clinical-review': () => [202, { jobId: AI_JOB, kind: 'clinical-review' }] as [number, unknown],
+      [`GET /api/ai/jobs/${AI_JOB}`]: (Array.isArray(result) ? result : [result]).map(
+        (body) => () => [200, body] as [number, unknown],
+      ),
+      [`DELETE /api/ai/jobs/${AI_JOB}`]: () => [204, null] as [number, unknown],
+    })
+
+    it('generates the SOAP note from the labelled segments and then deletes the job', async () => {
+      const backend = fakeBackend(
+        aiRoutes([
+          aiJob({}),
+          aiJob({ status: 'completed', soapResult: { soap, warnings: [{ field: 'plan', message: 'check 14' }] } }),
+        ]),
+      )
+      const api = createHttpApi({ fetch: backend.fetch, pollIntervalMs: 1 })
+      const result = await api.generateSoap({ segments, context })
+
+      expect(result.soap).toEqual(soap)
+      expect(result.warnings).toEqual([{ field: 'plan', message: 'check 14' }])
+      expect(backend.calls[0]).toEqual({ method: 'POST', path: '/api/ai/soap', body: { segments, context } })
+      await vi.waitFor(() =>
+        expect(backend.calls).toContainEqual({ method: 'DELETE', path: `/api/ai/jobs/${AI_JOB}`, body: undefined }),
+      )
+    })
+
+    it('sends the speaker labels and the edited note to the clinical review', async () => {
+      const review = {
+        informationGaps: [],
+        followUpQuestions: [],
+        differentialConsiderations: [],
+        documentationInconsistencies: [],
+        omittedUnverified: 2,
+      }
+      const backend = fakeBackend(aiRoutes(aiJob({ kind: 'clinical-review', status: 'completed', reviewResult: review })))
+      const api = createHttpApi({ fetch: backend.fetch, pollIntervalMs: 1 })
+      const result = await api.runClinicalReview({ segments, soap, context })
+
+      expect(result.review).toEqual(review)
+      expect(backend.calls[0]).toEqual({
+        method: 'POST',
+        path: '/api/ai/clinical-review',
+        body: { segments, soap, context },
+      })
+      expect(backend.calls[0].body).toMatchObject({ segments: [{ speaker: 'clinician' }, { speaker: 'patient' }] })
+    })
+
+    it('reports a failed job with the backend’s safe message', async () => {
+      const error = { code: 'AI_TIMEOUT', message: 'The AI model took too long to answer.', retryable: true }
+      const backend = fakeBackend(aiRoutes(aiJob({ status: 'error', error })))
+      const api = createHttpApi({ fetch: backend.fetch, pollIntervalMs: 1 })
+      await expect(api.generateSoap({ segments, context })).rejects.toMatchObject(error)
+    })
+
+    it('reports request errors from the backend', async () => {
+      const backend = fakeBackend({
+        'POST /api/ai/soap': () => [
+          413,
+          { error: { code: 'REQUEST_TOO_LARGE', message: 'The transcript and note are too long.', retryable: false } },
+        ],
+      })
+      const api = createHttpApi({ fetch: backend.fetch })
+      await expect(api.generateSoap({ segments, context })).rejects.toMatchObject({
+        code: 'REQUEST_TOO_LARGE',
+        retryable: false,
+      })
+    })
+
+    it('reports an unreachable backend', async () => {
+      const api = createHttpApi({ fetch: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) })
+      await expect(api.runClinicalReview({ segments, soap, context })).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    })
+
+    it('cancels the backend job when the request is aborted', async () => {
+      const backend = fakeBackend(aiRoutes(aiJob({})))
+      const api = createHttpApi({ fetch: backend.fetch, pollIntervalMs: 50 })
+      const controller = new AbortController()
+      const pending = api.generateSoap({ segments, context }, { signal: controller.signal })
+      await vi.waitFor(() => expect(backend.calls.some((call) => call.method === 'GET')).toBe(true))
+      controller.abort()
+      await expect(pending).rejects.toSatisfy(isCancellation)
+      await vi.waitFor(() =>
+        expect(backend.calls).toContainEqual({ method: 'DELETE', path: `/api/ai/jobs/${AI_JOB}`, body: undefined }),
+      )
+    })
   })
 })
 

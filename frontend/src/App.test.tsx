@@ -21,6 +21,20 @@ async function startEncounter(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
 }
 
+type User = ReturnType<typeof userEvent.setup>
+
+/** Record, stop, and wait for transcription to finish: the clinician is now reviewing. */
+async function reachReview(user: User) {
+  await recordAndStop(user)
+  await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
+}
+
+/** Ask for the SOAP draft and wait until it has filled the note. */
+async function generateNote(user: User) {
+  await user.click(screen.getByRole('button', { name: 'Generate SOAP note' }))
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Plan' })).not.toHaveValue(''), { timeout: 3000 })
+}
+
 async function recordAndStop(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('checkbox', { name: /consented/i }))
   await user.click(screen.getByRole('button', { name: /start recording/i }))
@@ -41,18 +55,31 @@ describe('AirSOAP workflow', () => {
     await screen.findByRole('heading', { level: 1, name: 'Processing the recording' })
     await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
 
-    // The AI received age + encounter type, but no identifiers.
-    const sent = generateSoap.mock.calls[0][0] as SoapGenerationRequest
-    expect(sent.context).toMatchObject({ encounterType: 'acute' })
-    expect(typeof sent.context.patientAge).toBe('number')
-    expect(JSON.stringify(sent)).not.toMatch(/Jordan|Testpatient|1991-04-12|DEMO-000123/)
+    // Nothing is generated until the clinician asks; speakers start as Unknown.
+    expect(generateSoap).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Plan' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Submit note (demo)' })).toBeDisabled()
+    const speakers = screen.getAllByRole('combobox', { name: /speaker for segment/i })
+    expect(speakers.length).toBeGreaterThan(1)
+    expect(speakers[0]).toHaveDisplayValue('Unknown')
 
-    // Speaker labels and editable transcript.
-    expect(screen.getAllByRole('combobox', { name: /speaker for segment/i }).length).toBeGreaterThan(1)
+    // The clinician labels the first two turns and edits the first one.
+    await user.selectOptions(speakers[0], 'clinician')
+    await user.selectOptions(speakers[1], 'patient')
     const firstSegment = screen.getByRole('textbox', { name: /segment 1 text \(clinician/i })
     await user.clear(firstSegment)
     await user.type(firstSegment, 'Edited greeting.')
     expect(firstSegment).toHaveValue('Edited greeting.')
+
+    await generateNote(user)
+
+    // The AI received the clinician's labels, age and encounter type, but no identifiers.
+    const sent = generateSoap.mock.calls[0][0] as SoapGenerationRequest
+    expect(sent.context).toMatchObject({ encounterType: 'acute' })
+    expect(typeof sent.context.patientAge).toBe('number')
+    expect(sent.segments.slice(0, 3).map((s) => s.speaker)).toEqual(['clinician', 'patient', 'unknown'])
+    expect(sent.segments[0].text).toBe('Edited greeting.')
+    expect(JSON.stringify(sent)).not.toMatch(/Jordan|Testpatient|1991-04-12|DEMO-000123/)
 
     // Editing a SOAP field; emptying one blocks submission.
     const plan = screen.getByRole('textbox', { name: 'Plan' })
@@ -104,22 +131,45 @@ describe('AirSOAP workflow', () => {
     expect(screen.getByRole('button', { name: /start recording/i })).toBeDisabled()
   })
 
-  it('recovers from a processing failure via retry, resuming at SOAP generation', async () => {
+  it('recovers from a transcription failure via retry', async () => {
     const user = userEvent.setup()
     const transcribe = vi.spyOn(api, 'transcribe')
     render(<App api={api} />)
 
     await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'soap-generation')
+    await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'transcription')
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await recordAndStop(user)
 
     await screen.findByRole('heading', { level: 1, name: 'Processing failed' }, { timeout: 3000 })
-    expect(screen.getByRole('alert')).toHaveTextContent(/note generator timed out/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(/speech-to-text service stopped/i)
 
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
-    expect(transcribe).toHaveBeenCalledTimes(1)
+    expect(transcribe).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a SOAP generation failure in the note panel, keeps the transcript, and lets you try again', async () => {
+    const user = userEvent.setup()
+    render(<App api={api} />)
+
+    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'soap-generation')
+    await user.click(screen.getByRole('button', { name: 'Start encounter' }))
+    await reachReview(user)
+    const speakers = screen.getAllByRole('combobox', { name: /speaker for segment/i })
+    await user.selectOptions(speakers[0], 'clinician')
+
+    await user.click(screen.getByRole('button', { name: 'Generate SOAP note' }))
+    const alert = await screen.findByRole('alert', {}, { timeout: 3000 })
+    expect(alert).toHaveTextContent(/could not be generated/i)
+    expect(alert).toHaveTextContent(/note generator timed out/i)
+    expect(screen.getByRole('textbox', { name: 'Plan' })).toHaveValue('') // a failure never fills the note
+    expect(screen.getAllByRole('combobox', { name: /speaker for segment/i })[0]).toHaveDisplayValue('Clinician') // label kept
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Plan' })).not.toHaveValue(''), { timeout: 3000 })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('shows a submission error inside the dialog and allows retrying', async () => {
@@ -129,8 +179,8 @@ describe('AirSOAP workflow', () => {
     await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
     await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'submission')
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
-    await recordAndStop(user)
-    await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
+    await reachReview(user)
+    await generateNote(user)
 
     await user.click(screen.getByRole('button', { name: 'Submit note (demo)' }))
     await user.click(screen.getByRole('button', { name: 'Submit demo note' }))
@@ -191,8 +241,10 @@ describe('AirSOAP workflow', () => {
     render(<App api={api} />)
 
     await startEncounter(user)
-    await recordAndStop(user)
-    await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
+    await reachReview(user)
+    await generateNote(user)
+    await user.click(screen.getByRole('button', { name: 'Run Clinical Review' }))
+    await screen.findByRole('heading', { level: 3, name: 'Follow-up questions' }, { timeout: 3000 })
     await user.click(screen.getByRole('button', { name: 'Submit note (demo)' }))
     await user.click(screen.getByRole('button', { name: 'Submit demo note' }))
     await screen.findByRole('heading', { level: 1, name: 'Demo submission complete' })

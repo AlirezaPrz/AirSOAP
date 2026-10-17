@@ -1,19 +1,31 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { SOAP_PLACEHOLDER, createHttpApi } from './api/httpClient'
+import { createHttpApi } from './api/httpClient'
 
 const REC = 'a'.repeat(32)
 const JOB = 'b'.repeat(32)
+const SOAP_JOB = 'c'.repeat(32)
+const REVIEW_JOB = 'd'.repeat(32)
 
 function json(status: number, payload: unknown) {
-  return new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(status === 204 ? null : JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
-/** Just enough of the FastAPI backend for one encounter. */
+const SOAP = {
+  subjective: 'Patient reports a sore throat.',
+  objective: 'Temperature 38.3.',
+  assessment: 'Not documented.',
+  plan: 'Not documented.',
+}
+
+/** Just enough of the FastAPI backend for one encounter, including both AI tasks. */
 function backendFetch() {
-  let polls = 0
+  let transcriptionPolls = 0
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const route = `${init?.method ?? 'GET'} ${String(input)}`
     switch (route) {
@@ -22,8 +34,8 @@ function backendFetch() {
       case 'POST /api/recording/stop':
         return json(200, { recordingId: REC, durationMs: 6000, jobId: JOB })
       case `GET /api/transcriptions/${JOB}`:
-        polls += 1
-        return polls < 3
+        transcriptionPolls += 1
+        return transcriptionPolls < 3
           ? json(200, { jobId: JOB, status: 'processing', progress: null, audioDurationMs: 6000, transcript: null, error: null })
           : json(200, {
               jobId: JOB,
@@ -41,6 +53,46 @@ function backendFetch() {
               },
               error: null,
             })
+      case 'POST /api/ai/soap':
+        return json(202, { jobId: SOAP_JOB, kind: 'soap' })
+      case `GET /api/ai/jobs/${SOAP_JOB}`:
+        return json(200, {
+          jobId: SOAP_JOB,
+          kind: 'soap',
+          status: 'completed',
+          soapResult: { soap: SOAP, warnings: [] },
+          reviewResult: null,
+          error: null,
+        })
+      case 'POST /api/ai/clinical-review':
+        return json(202, { jobId: REVIEW_JOB, kind: 'clinical-review' })
+      case `GET /api/ai/jobs/${REVIEW_JOB}`:
+        return json(200, {
+          jobId: REVIEW_JOB,
+          kind: 'clinical-review',
+          status: 'completed',
+          soapResult: null,
+          reviewResult: {
+            informationGaps: [],
+            followUpQuestions: [
+              {
+                id: 'sug-1',
+                category: 'follow_up_question',
+                description: 'How long has the sore throat lasted?',
+                rationale: 'Duration helps to narrow the cause.',
+                uncertainty: 'medium',
+                evidence: [{ source: 'transcript', quote: 'A sore throat.', segmentId: 'seg-2' }],
+              },
+            ],
+            differentialConsiderations: [],
+            documentationInconsistencies: [],
+            omittedUnverified: 0,
+          },
+          error: null,
+        })
+      case `DELETE /api/ai/jobs/${SOAP_JOB}`:
+      case `DELETE /api/ai/jobs/${REVIEW_JOB}`:
+        return json(204, null)
       default:
         return json(404, { detail: 'Not Found' })
     }
@@ -48,7 +100,7 @@ function backendFetch() {
 }
 
 describe('AirSOAP workflow against the backend', () => {
-  it('shows the real transcript with unassigned speakers and placeholder SOAP fields', async () => {
+  it('transcribes, then generates the note and runs the review only on request, with labels the clinician set', async () => {
     const user = userEvent.setup()
     const fetch = backendFetch()
     render(<App api={createHttpApi({ fetch: fetch as unknown as typeof globalThis.fetch, pollIntervalMs: 1 })} />)
@@ -67,12 +119,37 @@ describe('AirSOAP workflow against the backend', () => {
     await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
     const transcript = screen.getByRole('list', { name: 'Transcript segments' })
     expect(within(transcript).getByDisplayValue('What brings you in today?')).toBeInTheDocument()
-    expect(within(transcript).getAllByRole('combobox', { name: /speaker for segment/i })[0]).toHaveDisplayValue('Unassigned')
-    expect(screen.getByRole('textbox', { name: 'Plan' })).toHaveValue(SOAP_PLACEHOLDER)
+    const speakers = within(transcript).getAllByRole('combobox', { name: /speaker for segment/i })
+    expect(speakers[0]).toHaveDisplayValue('Unknown')
 
-    // Only recording and transcription requests reach the backend, never patient details.
-    const bodies = fetch.mock.calls.map(([, init]) => String(init?.body ?? ''))
-    expect(bodies.join(' ')).not.toMatch(/Jordan|Testpatient|1991|DEMO-000123/)
+    // No AI call has happened yet.
+    const called = () => fetch.mock.calls.map(([url]) => String(url))
+    expect(called().some((url) => url.startsWith('/api/ai/'))).toBe(false)
+    expect(screen.getByRole('textbox', { name: 'Plan' })).toHaveValue('')
+
+    await user.selectOptions(speakers[0], 'clinician')
+    await user.selectOptions(speakers[1], 'patient')
+    await user.click(screen.getByRole('button', { name: 'Generate SOAP note' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Subjective' })).toHaveValue(SOAP.subjective))
+    expect(screen.getByRole('textbox', { name: 'Objective' })).toHaveValue(SOAP.objective)
+
+    await user.click(screen.getByRole('button', { name: 'Run Clinical Review' }))
+    await screen.findByText('How long has the sore throat lasted?')
+    expect(screen.getByText(/Transcript, turn 2/)).toBeInTheDocument()
+
+    // What each AI task was sent: the clinician's labels, the edited note, and no identifiers.
+    const sent = (path: string) =>
+      JSON.parse(String(fetch.mock.calls.find(([url, init]) => String(url) === path && init?.method === 'POST')?.[1]?.body))
+    expect(sent('/api/ai/soap').segments.map((s: { speaker: string }) => s.speaker)).toEqual(['clinician', 'patient'])
+    expect(sent('/api/ai/clinical-review').soap.subjective).toBe(SOAP.subjective)
+    const bodies = fetch.mock.calls.map(([, init]) => String(init?.body ?? '')).join(' ')
+    expect(bodies).not.toMatch(/Jordan|Testpatient|1991|DEMO-000123/)
     expect(fetch.mock.calls.every(([url]) => String(url).startsWith('/api/'))).toBe(true)
+
+    // Finished AI jobs are removed from backend memory.
+    await waitFor(() => {
+      const deletes = fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE').map(([url]) => String(url))
+      expect(deletes).toEqual(expect.arrayContaining([`/api/ai/jobs/${SOAP_JOB}`, `/api/ai/jobs/${REVIEW_JOB}`]))
+    })
   })
 })
