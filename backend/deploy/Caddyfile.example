@@ -1,0 +1,27 @@
+# Caddy in front of AirSOAP on the Raspberry Pi: HTTPS on your local network, one origin
+# for the frontend and the API. Copy to /etc/caddy/Caddyfile (see backend/README.md):
+#
+#   sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# `tls internal` makes Caddy its own certificate authority. Browsers warn until you install
+# Caddy's root certificate on each laptop or tablet (README: "Trust the certificate").
+# Never forward ports 80 or 443 on your router: this is for the local network only.
+
+raspberrypi.local {
+	tls internal
+
+	# The backend serves both the built frontend and /api, on loopback only.
+	reverse_proxy 127.0.0.1:8000
+
+	encode zstd gzip
+
+	header {
+		# Do not advertise the server software.
+		-Server
+	}
+
+	# No `log` directive on purpose: Caddy then writes no access log. Request URLs carry only
+	# random IDs, but there is no need to keep a record of who used the device when.
+}

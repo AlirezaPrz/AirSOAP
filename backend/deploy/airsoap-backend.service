@@ -1,5 +1,5 @@
 [Unit]
-Description=AirSOAP backend (FastAPI, loopback only)
+Description=AirSOAP backend (FastAPI, loopback only, behind Caddy)
 # whisper-server is started and stopped by the backend itself (AIRSOAP_WHISPER_LIFECYCLE=on-demand).
 # Stopping this service also stops it: both run in the same systemd cgroup.
 
@@ -11,6 +11,8 @@ ExecStart=%h/AirSOAP/backend/.venv/bin/python -m airsoap
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes
+# Files the backend creates (database, temporary audio) are readable by this user only.
+UMask=0077
 
 [Install]
 WantedBy=default.target
