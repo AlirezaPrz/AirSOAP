@@ -1,0 +1,8 @@
+# Runtime dependencies, pinned to the versions tested on macOS (Python 3.13).
+# Install on the Pi with: .venv/bin/pip install -r requirements.txt
+asyncer==0.0.18
+fastapi==0.143.3
+httpx==0.28.1
+pydantic==2.14.1
+pydantic-settings==2.16.0
+uvicorn==0.54.0
