@@ -8,6 +8,3 @@ export const FILTERS: { key: Filter; label: string; test: (a: Account) => boolea
   { key: 'disabled', label: 'Disabled', test: (a) => !a.isActive },
   { key: 'temporary', label: 'Temporary password', test: (a) => a.isActive && a.mustChangePassword },
 ]
-
-export const countWhere = (accounts: Account[], filter: Filter) =>
-  accounts.filter(FILTERS.find((f) => f.key === filter)?.test ?? (() => true)).length

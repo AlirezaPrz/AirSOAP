@@ -196,16 +196,8 @@ describe('interactive helpers', () => {
     const list = () => screen.getByRole('list', { name: 'Accounts' })
     expect(within(list()).getAllByRole('listitem')).toHaveLength(3)
 
-    await user.click(within(screen.getByRole('group', { name: 'Show' })).getByRole('button', { name: /temporary password/i }))
+    await user.click(screen.getByRole('button', { name: /temporary password/i }))
     expect(within(list()).getAllByRole('listitem')).toHaveLength(2)
-
-    // The sidebar overview counts the same accounts and toggles the same filter.
-    const overview = screen.getByRole('region', { name: 'Overview' })
-    const pending = within(overview).getByRole('button', { name: /^temporary password: 2/i })
-    expect(pending).toHaveAttribute('aria-pressed', 'true')
-    await user.click(pending)
-    expect(within(list()).getAllByRole('listitem')).toHaveLength(3)
-    await user.click(within(overview).getByRole('button', { name: /^temporary password: 2/i }))
 
     await user.type(screen.getByLabelText('Search accounts'), 'two')
     expect(within(list()).getAllByRole('listitem')).toHaveLength(1)

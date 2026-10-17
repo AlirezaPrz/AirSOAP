@@ -17,9 +17,22 @@ const ROLE_HINTS: Record<Role, string> = {
 const errorMessage = (caught: unknown, fallback: string) =>
   toApiError(caught, { code: 'UNKNOWN', message: fallback, retryable: true }).message
 
-function formatSignIn(iso: string | null): string {
-  if (!iso) return 'Never signed in'
-  return `Last signed in ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso))}`
+const formatDate = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso))
+
+/** One line on where the account stands, worded for what the administrator might do next. */
+function accountStatus(account: Account): string {
+  if (!account.isActive) return 'Cannot sign in until re-enabled'
+  if (account.mustChangePassword) {
+    return account.lastLoginAt ? 'Password was reset; not changed yet' : 'Has not signed in yet'
+  }
+  return account.lastLoginAt ? `Last signed in ${formatDate(account.lastLoginAt)}` : 'Has not signed in yet'
+}
+
+/** "Clinician", "Administrator" or "Administrator and clinician". */
+function rolesText(account: Account): string {
+  const labels = account.roles.map((role) => ROLE_LABELS[role])
+  return labels.length === 2 ? `${labels[0]} and ${labels[1].toLowerCase()}` : (labels[0] ?? 'No role')
 }
 
 type DialogState =
@@ -32,25 +45,16 @@ interface AccountsScreenProps {
   auth: AuthApi
   /** The administrator using the screen. */
   currentUserId: string
-  /** Which accounts are listed; the sidebar overview can change it too. */
-  filter: Filter
-  onFilter: (filter: Filter) => void
-  /** Told whenever the list changes, so the sidebar overview stays current. */
-  onAccounts: (accounts: Account[]) => void
 }
 
-export function AccountsScreen({ auth, currentUserId, filter, onFilter, onAccounts }: AccountsScreenProps) {
+export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
   const [accounts, setAccounts] = useState<Account[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<DialogState | null>(null)
 
   const [attempt, setAttempt] = useState(0)
-
-  useEffect(() => {
-    if (accounts) onAccounts(accounts)
-  }, [accounts, onAccounts])
   const [query, setQuery] = useState('')
-  const setFilter = onFilter
+  const [filter, setFilter] = useState<Filter>('all')
 
   useEffect(() => {
     let current = true
@@ -76,7 +80,7 @@ export function AccountsScreen({ auth, currentUserId, filter, onFilter, onAccoun
     <>
       <PageHeader
         title="Accounts"
-        description="Everyone who can sign in to this AirSOAP device. Create an account for each person; nobody can sign up on their own."
+        description="Each person who uses this device needs their own account. A new account starts with a temporary password, which the person replaces the first time they sign in."
         actions={<Button onClick={() => setDialog({ kind: 'create' })}>New account</Button>}
       />
 
@@ -251,49 +255,43 @@ function AccountRow({
   onEdit: () => void
   onReset: () => void
 }) {
+  const attention = !account.isActive
+    ? { label: 'Disabled', className: 'bg-danger-soft text-[#7a1a12]' }
+    : account.mustChangePassword
+      ? { label: 'Temporary password', className: 'bg-warn-soft text-warn-ink' }
+      : null
   return (
-    <li
-      className={`flex flex-col gap-4 rounded-(--radius-panel) bg-surface px-5 py-4 md:flex-row md:items-center md:justify-between ${
-        account.isActive ? '' : 'text-ink-3'
-      }`}
-    >
+    <li className="grid gap-x-6 gap-y-3 rounded-(--radius-panel) bg-surface px-5 py-4 md:grid-cols-[minmax(0,5fr)_minmax(0,4fr)_auto] md:items-center">
       <div className="min-w-0">
         <p className={`truncate text-[15px] font-semibold ${account.isActive ? 'text-ink' : 'text-ink-2'}`}>
           {account.displayName}
           {isYou && <span className="font-normal text-ink-3"> (you)</span>}
         </p>
         <p className="truncate text-sm text-ink-3">{account.email}</p>
-        <p className="mt-1 text-sm text-ink-3">{formatSignIn(account.lastLoginAt)}</p>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {account.roles.map((role) => (
-          <span key={role} className="rounded-(--radius-control) bg-sunken px-2 py-1 text-sm text-ink-2">
-            {ROLE_LABELS[role]}
-          </span>
-        ))}
-        {!account.isActive && (
-          <span className="rounded-(--radius-control) bg-danger-soft px-2 py-1 text-sm font-medium text-[#7a1a12]">
-            Disabled
-          </span>
-        )}
-        {account.isActive && account.mustChangePassword && (
-          <span className="rounded-(--radius-control) bg-warn-soft px-2 py-1 text-sm text-warn-ink">
-            Temporary password
-          </span>
-        )}
-        <span className="flex gap-1 md:ml-4">
-          <Button variant="ghost" className="h-9 px-3" onClick={onEdit} aria-label={`Edit ${account.displayName}`}>
-            Edit
-          </Button>
-          <Button
-            variant="ghost"
-            className="h-9 px-3"
-            onClick={onReset}
-            aria-label={`Reset password for ${account.displayName}`}
-          >
-            Reset password
-          </Button>
-        </span>
+      <div className="min-w-0 text-sm">
+        <p className="flex flex-wrap items-center gap-2 text-ink-2">
+          {rolesText(account)}
+          {attention && (
+            <span className={`rounded-(--radius-control) px-2 py-0.5 font-medium ${attention.className}`}>
+              {attention.label}
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-ink-3">{accountStatus(account)}</p>
+      </div>
+      <div className="-ml-3 flex gap-1 md:ml-0">
+        <Button variant="ghost" className="h-9 px-3" onClick={onEdit} aria-label={`Edit ${account.displayName}`}>
+          Edit
+        </Button>
+        <Button
+          variant="ghost"
+          className="h-9 px-3"
+          onClick={onReset}
+          aria-label={`Reset password for ${account.displayName}`}
+        >
+          Reset password
+        </Button>
       </div>
     </li>
   )
