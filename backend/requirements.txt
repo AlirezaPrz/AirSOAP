@@ -1,5 +1,8 @@
 # Runtime dependencies, pinned to the versions tested on macOS (Python 3.13).
 # Install on the Pi with: .venv/bin/pip install -r requirements.txt
+argon2-cffi==25.1.0
+# Native Argon2 code used by argon2-cffi (prebuilt wheels for macOS and 64-bit Raspberry Pi OS).
+argon2-cffi-bindings==26.1.0
 asyncer==0.0.18
 fastapi==0.143.3
 httpx==0.28.1

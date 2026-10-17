@@ -12,3 +12,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+
+# Account database and backups: never commit (they live outside the repo by default anyway)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

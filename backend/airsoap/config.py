@@ -50,6 +50,42 @@ def default_work_dir() -> Path:
     return Path(tempfile.gettempdir()) / f"airsoap-{os.getuid()}"
 
 
+def default_database_path() -> Path:
+    """Persistent storage for the account database, never a temporary directory."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "AirSOAP" / "airsoap.db"
+    state_home = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state_home) / "airsoap" / "airsoap.db"
+
+
+def _ephemeral_roots() -> list[Path]:
+    # Listed so that a database placed in any of them is refused.
+    roots = [Path("/tmp"), Path("/var/tmp"), Path("/run"), Path("/dev/shm")]  # noqa: S108
+    roots.append(Path(tempfile.gettempdir()))
+    if runtime := os.environ.get("XDG_RUNTIME_DIR"):
+        roots.append(Path(runtime))
+    resolved = []
+    for root in roots:
+        try:
+            resolved.append(root.resolve())
+        except OSError:
+            continue
+    return resolved
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+_ORIGIN = re.compile(r"^https?://[a-z0-9.-]+(:\d{1,5})?$")
+# On a Mac (development): the Vite dev server, plus the backend's own port (added below).
+DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+
+
 def _is_mac() -> bool:
     return sys.platform == "darwin"
 
@@ -100,6 +136,27 @@ class Settings(BaseSettings):
 
     frontend_dist: Path | None = None
 
+    # --- accounts and sessions (Phase 5) ---
+    database_path: Path = Field(default_factory=lambda: default_database_path())
+    # Tests only: lets the database live in a temporary directory.
+    allow_ephemeral_database: bool = False
+    # None means: Secure on Linux (served over HTTPS by Caddy), not Secure on macOS (local HTTP development).
+    cookie_secure: bool | None = None
+    # Comma-separated origins allowed to make state-changing requests, e.g. "https://raspberrypi.local".
+    allowed_origins: str = ""
+    session_idle_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    session_absolute_hours: int = Field(default=12, ge=1, le=7 * 24)
+    role_selection_minutes: int = Field(default=5, ge=1, le=60)
+    login_max_failures_per_account: int = Field(default=5, ge=1)
+    login_max_failures_per_ip: int = Field(default=20, ge=1)
+    login_failure_window_minutes: int = Field(default=15, ge=1)
+    audit_retention_days: int = Field(default=365, ge=1)
+    api_docs: bool = False
+    # How often to end the recording and jobs of accounts whose sessions have lapsed.
+    session_sweep_seconds: float = Field(default=60, gt=0)
+    # Addresses whose X-Forwarded-For header is trusted (the local Caddy reverse proxy).
+    trusted_proxies: str = "127.0.0.1"
+
     @field_validator("arecord_device")
     @classmethod
     def _check_device(cls, value: str) -> str:
@@ -113,6 +170,31 @@ class Settings(BaseSettings):
         if value is not None and not value.is_absolute():
             raise ValueError("whisper paths must be absolute")
         return value
+
+    @field_validator("database_path")
+    @classmethod
+    def _absolute_database_path(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("database_path must be an absolute path")
+        return value
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _check_origins(cls, value: str) -> str:
+        for origin in filter(None, (part.strip().lower().rstrip("/") for part in value.split(","))):
+            if not _ORIGIN.fullmatch(origin):
+                raise ValueError("allowed_origins must be like https://raspberrypi.local (scheme and host)")
+        return value
+
+    @model_validator(mode="after")
+    def _database_is_persistent(self) -> "Settings":
+        if self.allow_ephemeral_database:
+            return self
+        if _is_within(self.database_path, self.work_dir):
+            raise ValueError("database_path must not be inside the temporary audio directory (work_dir)")
+        if any(_is_within(self.database_path, root) for root in _ephemeral_roots()):
+            raise ValueError("database_path must be on persistent storage, not in a temporary directory")
+        return self
 
     @field_validator("work_dir")
     @classmethod
@@ -147,6 +229,20 @@ class Settings(BaseSettings):
         if self.recorder is RecorderKind.AUTO:
             return RecorderKind.MOCK if _is_mac() else RecorderKind.ARECORD
         return self.recorder
+
+    @cached_property
+    def resolved_cookie_secure(self) -> bool:
+        return (not _is_mac()) if self.cookie_secure is None else self.cookie_secure
+
+    @cached_property
+    def resolved_allowed_origins(self) -> frozenset[str]:
+        parts = (part.strip().lower().rstrip("/") for part in self.allowed_origins.split(","))
+        origins = {part for part in parts if part}
+        if origins:
+            return frozenset(origins)
+        if _is_mac():
+            return frozenset((*DEV_ORIGINS, f"http://localhost:{self.port}", f"http://127.0.0.1:{self.port}"))
+        return frozenset(("https://raspberrypi.local",))
 
     @cached_property
     def resolved_ai(self) -> AiKind:
