@@ -5,16 +5,14 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { AlertIcon, CheckIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, Panel, ProgressBar } from '../components/ui'
 import { STAGE_LABELS } from '../lib/format'
-import { calculateAge, toModelAge } from '../workflow/privacy'
 import type { StateOf } from '../workflow/reducer'
 
 type StepStatus = 'pending' | 'active' | 'done' | 'failed'
 
-const STAGES: ProcessingStage[] = ['transcription', 'soap-generation']
+const STAGES: ProcessingStage[] = ['transcription']
 
 const STAGE_DESCRIPTIONS: Record<ProcessingStage, string> = {
   transcription: 'Converting the whole recording to text on this device.',
-  'soap-generation': 'Drafting Subjective, Objective, Assessment and Plan from the transcript.',
 }
 
 const STATUS_TEXT: Record<StepStatus, string> = {
@@ -97,7 +95,6 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
   const failed = state.status === 'processing-error'
   const stage = failed ? state.error.stage : state.stage
   const progress = failed ? 0 : state.progress
-  const age = calculateAge(state.encounter.patient.dateOfBirth)
 
   return (
     <>
@@ -123,7 +120,6 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
           <div className="mb-8">
             <Alert tone="error" title={`${STAGE_LABELS[state.error.stage]} failed`}>
               <p>{state.error.message}</p>
-              {state.transcript && <p className="mt-1">The transcript was kept. Retrying resumes at note generation.</p>}
             </Alert>
           </div>
         )}
@@ -142,23 +138,11 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
       </Panel>
 
       <section className="mt-6 rounded-(--radius-panel) bg-accent-soft px-6 py-6 text-accent-ink sm:px-10">
-        <h2 className="text-base font-semibold">Sent to the note generator</h2>
-        <dl className="mt-4 grid gap-5 sm:grid-cols-3">
-          <div>
-            <dt className="text-sm">Transcript</dt>
-            <dd className="mt-0.5 text-[17px] font-semibold">Identifiers removed</dd>
-          </div>
-          <div>
-            <dt className="text-sm">Patient age</dt>
-            <dd className="mt-0.5 text-[17px] font-semibold tabular-nums">
-              {age === null ? 'Unknown' : `${toModelAge(age)} years`}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm">Name, date of birth, MRN</dt>
-            <dd className="mt-0.5 text-[17px] font-semibold">Not shared</dd>
-          </div>
-        </dl>
+        <h2 className="text-base font-semibold">What happens next</h2>
+        <p className="mt-1 text-[15px]">
+          You will review the transcript and set who spoke each part. The SOAP note is drafted only when you ask for it,
+          and the optional clinical review only when you run it.
+        </p>
       </section>
 
       {confirmCancel && (
