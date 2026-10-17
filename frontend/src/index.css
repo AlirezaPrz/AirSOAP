@@ -1,0 +1,72 @@
+@import '@fontsource-variable/ibm-plex-sans';
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Bundled font (the device runs offline), one ground, one ink,
+ * one accent. Surfaces are separated by tone steps, not lines or shadows.
+ */
+@theme {
+  --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --color-ground: #f3f5f4;
+  --color-rail: #e8ecea;
+  --color-surface: #ffffff;
+  --color-sunken: #f3f5f4;
+
+  --color-ink: #121a17;
+  --color-ink-2: #46524d;
+  --color-ink-3: #5a6661;
+  --color-field: #c9d1cd;
+
+  --color-accent: #0b5f50;
+  --color-accent-hover: #084a3e;
+  --color-accent-soft: #dfece8;
+  --color-accent-ink: #083f35;
+
+  --color-danger: #b42318;
+  --color-danger-hover: #912018;
+  --color-danger-soft: #fbe9e7;
+
+  --color-warn-soft: #fbf0d9;
+  --color-warn-ink: #6b4500;
+
+  --radius-control: 4px;
+  --radius-panel: 6px;
+}
+
+html {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-feature-settings: 'tnum' 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+/* Simulated input level while recording. */
+@keyframes level {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.level-bar {
+  animation: level ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
