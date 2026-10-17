@@ -6,10 +6,9 @@ import {
   type RequestOptions,
 } from './client'
 import { createMockApi } from './mockClient'
+import { createRequester, type RequesterOptions } from './request'
 import type {
   AiJobResponse,
-  ApiError,
-  ApiErrorCode,
   ClinicalReviewRequest,
   DiscardRecordingRequest,
   SoapGenerationRequest,
@@ -23,25 +22,8 @@ import type {
   TranscriptionResponse,
 } from './types'
 
-export interface HttpApiOptions {
-  /** '' means same origin: the Vite dev proxy, or the backend serving the built frontend. */
-  baseUrl?: string
+export interface HttpApiOptions extends RequesterOptions {
   pollIntervalMs?: number
-  fetch?: typeof fetch
-}
-
-const UNREACHABLE: ApiError = {
-  code: 'UNAVAILABLE',
-  message: 'The AirSOAP backend is not reachable. Check that it is running on this device.',
-  retryable: true,
-}
-
-function readError(payload: unknown, status: number): ApiError {
-  const error = (payload as { error?: Partial<ApiError> } | null)?.error
-  if (error && typeof error.code === 'string' && typeof error.message === 'string') {
-    return { code: error.code as ApiErrorCode, message: error.message, retryable: error.retryable === true }
-  }
-  return { code: 'UNKNOWN', message: `The backend returned an unexpected error (HTTP ${status}).`, retryable: false }
 }
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
@@ -77,32 +59,14 @@ function toTranscript(wire: NonNullable<TranscriptionJobResponse['transcript']>)
  * Talks to the local FastAPI backend for recording, transcription, SOAP generation and
  * Clinical Review. Demo submission stays local: no EMR is connected.
  */
-export function createHttpApi({
-  baseUrl = '',
-  pollIntervalMs = 750,
-  fetch: fetchImpl = (input, init) => globalThis.fetch(input, init),
-}: HttpApiOptions = {}): AirSoapApi {
+export function createHttpApi({ pollIntervalMs = 750, ...requesterOptions }: HttpApiOptions = {}): AirSoapApi {
   const recording = new Set<string>()
   // Transcription job for each stopped recording, until the job finishes.
   const jobs = new Map<string, string>()
   const local = createMockApi()
-
-  async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-    let response: Response
-    try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
-        method,
-        signal,
-        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      })
-    } catch {
-      throw signal?.aborted ? cancelledError() : new ApiRequestError(UNREACHABLE)
-    }
-    const payload: unknown = await response.json().catch(() => null)
-    if (!response.ok) throw new ApiRequestError(readError(payload, response.status))
-    return payload as T
-  }
+  const send = createRequester(requesterOptions)
+  const request = <T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal) =>
+    send<T>(method, path, body, { signal })
 
   const cancelJob = (jobId: string) =>
     request('POST', `/api/transcriptions/${jobId}/cancel`).catch(() => {
