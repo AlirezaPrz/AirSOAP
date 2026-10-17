@@ -73,12 +73,13 @@ class FakeTranscriber:
         self.reachable = reachable
         self.calls: list[tuple[Path, int]] = []
         self.files_existed: list[bool] = []
+        self.released = 0
         self.active = 0
         self.max_active = 0
         self._gated = gated
         self._release: asyncio.Event | None = None
 
-    def release(self, client: TestClient) -> None:
+    def let_finish(self, client: TestClient) -> None:
         """Let a gated transcription finish. Runs on the app's event loop thread."""
         client.portal.call(self._event().set)
 
@@ -107,6 +108,9 @@ class FakeTranscriber:
 
     def is_loaded(self) -> bool:
         return False
+
+    async def release(self) -> None:
+        self.released += 1
 
     async def close(self) -> None:
         return None
@@ -148,3 +152,133 @@ def make_binary(directory: Path, name: str, source: str) -> str:
     script.write_text(f"#!{sys.executable}\n{source}")
     script.chmod(0o755)
     return str(script)
+
+
+# --- AI helpers (synthetic, fictional clinical text only) ----------------------------
+
+
+class FakeAiClient:
+    """Scripted stand-in for the Ollama client. Records calls, concurrency and unloads."""
+
+    name = "fake-ai"
+
+    def __init__(self, responses: list[object] | None = None, *, gated: bool = False, ready: bool = True):
+        # Each entry is the JSON the "model" answers with, or an exception to raise. The last repeats.
+        self.responses = responses or []
+        self.ready = ready
+        self.calls: list[tuple[str, int]] = []  # (task name, attempt)
+        self.active = 0
+        self.max_active = 0
+        self.unloads = 0
+        self._gated = gated
+        self._event: asyncio.Event | None = None
+
+    def let_finish(self, client: TestClient) -> None:
+        client.portal.call(self._gate().set)
+
+    def _gate(self) -> asyncio.Event:
+        if self._event is None:
+            self._event = asyncio.Event()
+        return self._event
+
+    async def complete(self, task, request, *, attempt: int):
+        from airsoap.ai.base import AiCompletion
+
+        self.calls.append((task.name, attempt))
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(0.01)
+            if self._gated:
+                await self._gate().wait()
+            if not self.responses:
+                return AiCompletion(data=task.mock(request), prompt_tokens=10, completion_tokens=5)
+            item = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+            if isinstance(item, Exception):
+                raise item
+            return AiCompletion(data=item, prompt_tokens=10, completion_tokens=5)  # type: ignore[arg-type]
+        finally:
+            self.active -= 1
+
+    async def is_ready(self) -> bool:
+        return self.ready
+
+    async def unload(self) -> None:
+        self.unloads += 1
+
+    async def close(self) -> None:
+        return None
+
+
+def segments(*pairs: tuple[str, str]) -> list[dict]:
+    """[("clinician", "text"), ("patient", "text")] -> API segments with stable IDs."""
+    return [
+        {"id": f"seg-{i}", "speaker": speaker, "text": text} for i, (speaker, text) in enumerate(pairs, 1)
+    ]
+
+
+VISIT = segments(
+    ("clinician", "What brings you in today?"),
+    ("patient", "I have had a sore throat for three days and it hurts to swallow."),
+    ("clinician", "Any fever or cough?"),
+    ("patient", "I felt feverish last night, around 101. No cough."),
+    ("clinician", "Your temperature today is 38.3 and your tonsils are swollen."),
+    ("clinician", "Do you have any drug allergies?"),
+)
+CONTEXT = {"patientAge": 35, "encounterType": "acute"}
+NOTE = {
+    "subjective": "Sore throat for three days. Fever last night, around 101 F. No cough.",
+    "objective": "Temp 38.3 C. Tonsils swollen.",
+    "assessment": "Probable pharyngitis.",
+    "plan": "Fluids and rest.",
+}
+
+
+def soap_payload(segs: list[dict] | None = None) -> dict:
+    return {"segments": segs or VISIT, "context": CONTEXT}
+
+
+def review_payload(note: dict | None = None, segs: list[dict] | None = None) -> dict:
+    return {"segments": segs or VISIT, "soap": note or NOTE, "context": CONTEXT}
+
+
+SOAP_ANSWER = {
+    "subjective": (
+        "Patient reports a sore throat for three days with pain on swallowing. "
+        "Felt feverish last night (about 101). Denies cough."
+    ),
+    "objective": "Temperature 38.3. Tonsils swollen.",
+    "assessment": "Not documented.",
+    "plan": "Not documented.",
+}
+
+
+def review_answer(**lists: list) -> dict:
+    base = {
+        "informationGaps": [],
+        "followUpQuestions": [],
+        "differentialConsiderations": [],
+        "documentationInconsistencies": [],
+    }
+    return {**base, **lists}
+
+
+def item(description: str, quote: str | None, *, source: str = "transcript", **extra) -> dict:
+    return {
+        "description": description,
+        "rationale": "Because it may clarify the history.",
+        "uncertainty": "medium",
+        "evidence": [{"source": source, "quote": quote}] if quote else [],
+        **extra,
+    }
+
+
+def wait_for_ai_job(client: TestClient, job_id: str, statuses: set[str], timeout: float = 3.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        body = client.get(f"/api/ai/jobs/{job_id}").json()
+        if body.get("status") in statuses:
+            return body
+        if time.monotonic() > deadline:
+            raise AssertionError(f"AI job stayed {body.get('status')!r}, expected one of {statuses}")
+        time.sleep(0.01)

@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from airsoap import config
-from airsoap.config import RecorderKind, Settings, TranscriberKind
+from airsoap.config import AiKind, RecorderKind, Settings, TranscriberKind
 
 
 def test_auto_uses_mocks_on_macos(monkeypatch):
@@ -75,3 +75,54 @@ def test_on_demand_whisper_needs_paths_and_a_loopback_port(tmp_path):
 def test_relative_work_dir_is_rejected():
     with pytest.raises(ValidationError):
         Settings(work_dir="relative/dir")
+
+
+def test_ai_defaults_to_the_mock_on_macos_and_ollama_on_linux(monkeypatch):
+    monkeypatch.setattr(config.sys, "platform", "darwin")
+    assert Settings().resolved_ai is AiKind.MOCK
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    assert Settings().resolved_ai is AiKind.OLLAMA
+
+
+def test_ollama_defaults():
+    settings = Settings()
+    assert settings.ollama_url == "http://127.0.0.1:11434"
+    assert settings.ollama_model == "qwen2.5:3b-instruct"
+    assert settings.ollama_keep_alive == "5m"
+    assert settings.ai_max_attempts == 2
+
+
+def test_ollama_reads_environment(monkeypatch):
+    monkeypatch.setenv("AIRSOAP_OLLAMA_MODEL", "airsoap-3b:latest")
+    monkeypatch.setenv("AIRSOAP_OLLAMA_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("AIRSOAP_OLLAMA_KEEP_ALIVE", "0")
+    settings = Settings()
+    assert (settings.ollama_model, settings.ollama_timeout_seconds, settings.ollama_keep_alive) == (
+        "airsoap-3b:latest",
+        120,
+        "0",
+    )
+
+
+def test_ollama_must_stay_on_this_device():
+    for url in ("http://192.168.4.60:11434", "http://example.com:11434", "file:///x"):
+        with pytest.raises(ValidationError):
+            Settings(ollama_url=url)
+    assert Settings(ollama_url="http://localhost:11500").ollama_url == "http://localhost:11500"
+
+
+@pytest.mark.parametrize("keep_alive", ["", "soon", "5 minutes", "-2", "m5"])
+def test_invalid_keep_alive_is_rejected(keep_alive):
+    with pytest.raises(ValidationError):
+        Settings(ollama_keep_alive=keep_alive)
+
+
+@pytest.mark.parametrize("keep_alive", ["0", "-1", "30s", "5m", "1h"])
+def test_valid_keep_alive_values(keep_alive):
+    assert Settings(ollama_keep_alive=keep_alive).ollama_keep_alive == keep_alive
+
+
+@pytest.mark.parametrize("model", ["", "qwen 2.5", "model;rm -rf /", "-evil"])
+def test_unsafe_model_names_are_rejected(model):
+    with pytest.raises(ValidationError):
+        Settings(ollama_model=model)
