@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import App from './App'
-import { AccountsScreen } from './admin/AccountsScreen'
-import { AdminShell } from './admin/AdminShell'
+import { AdminArea } from './admin/AdminShell'
 import { createDefaultServices, type Services } from './api'
 import type { Session } from './api/auth'
 import { toApiError } from './api/client'
@@ -154,9 +153,7 @@ export function Root({ services: provided }: RootProps) {
 
   if (session.activeRole === 'admin') {
     return (
-      <AdminShell account={account}>
-        <AccountsScreen key={generation} auth={auth} currentUserId={session.user.id} />
-      </AdminShell>
+      <AdminArea key={generation} auth={auth} account={account} currentUserId={session.user.id} />
     )
   }
 

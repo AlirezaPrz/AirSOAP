@@ -5,6 +5,7 @@ import { Button } from '../components/Button'
 import { ConfirmDialog, Dialog } from '../components/ConfirmDialog'
 import { SearchIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, inputClass, labelClass } from '../components/ui'
+import { FILTERS, type Filter } from './filters'
 
 const ROLES: Role[] = ['clinician', 'admin']
 
@@ -21,15 +22,6 @@ function formatSignIn(iso: string | null): string {
   return `Last signed in ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso))}`
 }
 
-type Filter = 'all' | 'active' | 'disabled' | 'temporary'
-
-const FILTERS: { key: Filter; label: string; test: (a: Account) => boolean }[] = [
-  { key: 'all', label: 'All', test: () => true },
-  { key: 'active', label: 'Active', test: (a) => a.isActive },
-  { key: 'disabled', label: 'Disabled', test: (a) => !a.isActive },
-  { key: 'temporary', label: 'Temporary password', test: (a) => a.isActive && a.mustChangePassword },
-]
-
 type DialogState =
   | { kind: 'create' }
   | { kind: 'edit'; account: Account }
@@ -40,16 +32,25 @@ interface AccountsScreenProps {
   auth: AuthApi
   /** The administrator using the screen. */
   currentUserId: string
+  /** Which accounts are listed; the sidebar overview can change it too. */
+  filter: Filter
+  onFilter: (filter: Filter) => void
+  /** Told whenever the list changes, so the sidebar overview stays current. */
+  onAccounts: (accounts: Account[]) => void
 }
 
-export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
+export function AccountsScreen({ auth, currentUserId, filter, onFilter, onAccounts }: AccountsScreenProps) {
   const [accounts, setAccounts] = useState<Account[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<DialogState | null>(null)
 
   const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    if (accounts) onAccounts(accounts)
+  }, [accounts, onAccounts])
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<Filter>('all')
+  const setFilter = onFilter
 
   useEffect(() => {
     let current = true
