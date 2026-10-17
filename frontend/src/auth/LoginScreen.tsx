@@ -4,6 +4,7 @@ import { toApiError } from '../api/client'
 import { Button } from '../components/Button'
 import { Alert, inputClass, labelClass } from '../components/ui'
 import { AuthLayout } from './AuthLayout'
+import { PasswordField } from './PasswordField'
 
 export type SignedOutNotice = 'expired' | 'disabled' | 'signed-out'
 
@@ -51,7 +52,7 @@ export function LoginScreen({ auth, notice, demo, onSignedIn }: LoginScreenProps
   }
 
   return (
-    <AuthLayout title="Sign in" description="Use the account your administrator created for you.">
+    <AuthLayout title="Sign in to AirSOAP" description="Use the email and password from your administrator.">
       <div className="space-y-6">
         {notice && !error && <Alert tone={NOTICES[notice].tone}>{NOTICES[notice].text}</Alert>}
         {error && <Alert tone="error">{error}</Alert>}
@@ -77,24 +78,14 @@ export function LoginScreen({ auth, notice, demo, onSignedIn }: LoginScreenProps
               className={`mt-2 ${inputClass}`}
             />
           </div>
-          <div>
-            <label htmlFor={`${id}-password`} className={labelClass}>
-              Password
-            </label>
-            <input
-              id={`${id}-password`}
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={`mt-2 ${inputClass}`}
-            />
-          </div>
+          <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
           <Button type="submit" size="lg" loading={busy} className="w-full">
             Sign in
           </Button>
         </form>
-        <p className="text-sm text-ink-3">Forgot your password? Ask your administrator to reset it.</p>
+        <p className="text-sm text-ink-3">
+          Forgot your password? Your administrator can reset it and give you a temporary one.
+        </p>
       </div>
     </AuthLayout>
   )

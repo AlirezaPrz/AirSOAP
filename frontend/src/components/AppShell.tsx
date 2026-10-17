@@ -4,6 +4,7 @@ import { calculateAge } from '../workflow/privacy'
 import type { Encounter, WorkflowStatus } from '../workflow/reducer'
 import { AccountSummary, MobileSignOut, type AccountInfo } from './AccountSummary'
 import { CheckIcon } from './icons'
+import { Logo } from './Logo'
 
 const STEPS = ['Patient', 'Record', 'Process', 'Review', 'Done'] as const
 
@@ -19,16 +20,8 @@ const STEP_INDEX: Record<WorkflowStatus, number> = {
   completed: 4,
 }
 
-const PRIVACY_NOTE = 'Runs locally. No EMR connected. Encounters are never saved to this device.'
+const PRIVACY_NOTE = 'A prototype for fictional patients. Runs on this device, connects to no EMR and never saves an encounter.'
 
-function Wordmark() {
-  return (
-    <div>
-      <p className="text-lg font-semibold tracking-[-0.01em] text-ink">AirSOAP</p>
-      <p className="text-sm text-ink-3">Demo with fictional data</p>
-    </div>
-  )
-}
 
 function StepList({ current }: { current: number }) {
   return (
@@ -102,9 +95,7 @@ function MobileBar({
   return (
     <header className="bg-rail px-5 pt-4 pb-4 lg:hidden">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-lg font-semibold tracking-[-0.01em]">
-          AirSOAP <span className="text-sm font-normal text-ink-3">· fictional data</span>
-        </p>
+        <Logo size="sm" />
         {account && <MobileSignOut account={account} />}
       </div>
       <nav aria-label="Encounter progress" className="mt-4">
@@ -142,7 +133,7 @@ export function AppShell({ status, encounter, account, children }: AppShellProps
     <div className="min-h-dvh bg-ground text-ink">
       <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto bg-rail px-5 py-7 lg:flex">
         <div className="px-3">
-          <Wordmark />
+          <Logo subtitle="Clinical workspace" />
         </div>
         <StepList current={current} />
         {encounter && <PatientContext encounter={encounter} />}

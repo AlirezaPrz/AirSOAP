@@ -103,7 +103,7 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
         description={
           failed
             ? 'The recording is safe. Retry, or discard this encounter.'
-            : 'Everything runs on this device. This usually takes under a minute.'
+            : 'Whisper is turning the recording into text on this device. Longer recordings take longer; keep this page open.'
         }
         actions={
           <>
@@ -140,8 +140,8 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
       <section className="mt-6 rounded-(--radius-panel) bg-accent-soft px-6 py-6 text-accent-ink sm:px-10">
         <h2 className="text-base font-semibold">What happens next</h2>
         <p className="mt-1 text-[15px]">
-          You will review the transcript and set who spoke each part. The SOAP note is drafted only when you ask for it,
-          and the optional clinical review only when you run it.
+          You check the transcript and mark who spoke each turn. Then you ask for the SOAP draft, edit it, and, if you
+          want a second look, run the optional clinical review.
         </p>
       </section>
 

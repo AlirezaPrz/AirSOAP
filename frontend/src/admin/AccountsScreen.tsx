@@ -3,7 +3,7 @@ import { ROLE_LABELS, type Account, type AuthApi, type Role, type TemporaryPassw
 import { toApiError } from '../api/client'
 import { Button } from '../components/Button'
 import { ConfirmDialog, Dialog } from '../components/ConfirmDialog'
-import { Spinner } from '../components/icons'
+import { SearchIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, inputClass, labelClass } from '../components/ui'
 
 const ROLES: Role[] = ['clinician', 'admin']
@@ -20,6 +20,15 @@ function formatSignIn(iso: string | null): string {
   if (!iso) return 'Never signed in'
   return `Last signed in ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso))}`
 }
+
+type Filter = 'all' | 'active' | 'disabled' | 'temporary'
+
+const FILTERS: { key: Filter; label: string; test: (a: Account) => boolean }[] = [
+  { key: 'all', label: 'All', test: () => true },
+  { key: 'active', label: 'Active', test: (a) => a.isActive },
+  { key: 'disabled', label: 'Disabled', test: (a) => !a.isActive },
+  { key: 'temporary', label: 'Temporary password', test: (a) => a.isActive && a.mustChangePassword },
+]
 
 type DialogState =
   | { kind: 'create' }
@@ -39,6 +48,8 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
   const [dialog, setDialog] = useState<DialogState | null>(null)
 
   const [attempt, setAttempt] = useState(0)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
 
   useEffect(() => {
     let current = true
@@ -64,7 +75,7 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
     <>
       <PageHeader
         title="Accounts"
-        description="Everyone who can sign in to this device. People cannot create their own accounts."
+        description="Everyone who can sign in to this AirSOAP device. Create an account for each person; nobody can sign up on their own."
         actions={<Button onClick={() => setDialog({ kind: 'create' })}>New account</Button>}
       />
 
@@ -85,8 +96,35 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
       )}
 
       {accounts && (
+        <AccountFilters
+          accounts={accounts}
+          query={query}
+          filter={filter}
+          onQuery={setQuery}
+          onFilter={setFilter}
+        />
+      )}
+
+      {accounts && visible(accounts, query, filter).length === 0 && (
+        <div className="rounded-(--radius-panel) bg-surface px-6 py-10 text-center">
+          <p className="text-[15px] font-medium text-ink">No accounts match</p>
+          <p className="mt-1 text-[15px] text-ink-2">Try another name or email, or show all accounts.</p>
+          <Button
+            variant="secondary"
+            className="mt-4"
+            onClick={() => {
+              setQuery('')
+              setFilter('all')
+            }}
+          >
+            Show all accounts
+          </Button>
+        </div>
+      )}
+
+      {accounts && (
         <ul aria-label="Accounts" className="space-y-2">
-          {accounts.map((account) => (
+          {visible(accounts, query, filter).map((account) => (
             <AccountRow
               key={account.id}
               account={account}
@@ -135,6 +173,69 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
         <TemporaryPasswordDialog result={dialog.result} reason={dialog.reason} onClose={() => setDialog(null)} />
       )}
     </>
+  )
+}
+
+function visible(accounts: Account[], query: string, filter: Filter): Account[] {
+  const needle = query.trim().toLowerCase()
+  const test = FILTERS.find((f) => f.key === filter)?.test ?? (() => true)
+  return accounts.filter(
+    (a) => test(a) && (!needle || a.displayName.toLowerCase().includes(needle) || a.email.includes(needle)),
+  )
+}
+
+function AccountFilters({
+  accounts,
+  query,
+  filter,
+  onQuery,
+  onFilter,
+}: {
+  accounts: Account[]
+  query: string
+  filter: Filter
+  onQuery: (value: string) => void
+  onFilter: (value: Filter) => void
+}) {
+  const id = useId()
+  return (
+    <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="relative md:w-80">
+        <label htmlFor={`${id}-search`} className="sr-only">
+          Search accounts
+        </label>
+        <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-[18px] -translate-y-1/2 text-ink-3" />
+        <input
+          id={`${id}-search`}
+          type="search"
+          placeholder="Search by name or email"
+          autoComplete="off"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          className={`${inputClass} pl-10`}
+        />
+      </div>
+      <div role="group" aria-label="Show" className="flex flex-wrap gap-1.5">
+        {FILTERS.map(({ key, label, test }) => {
+          const count = accounts.filter(test).length
+          const active = filter === key
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onFilter(key)}
+              className={`flex h-9 items-center gap-2 rounded-(--radius-control) px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                active ? 'bg-accent text-white' : 'bg-rail text-ink-2 hover:bg-control-hover hover:text-ink'
+              }`}
+            >
+              {label}
+              <span className={`tabular-nums ${active ? 'text-white/80' : 'text-ink-3'}`}>{count}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

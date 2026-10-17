@@ -12,7 +12,7 @@ function mockServices(auth: AuthApi = createMockAuthApi()): Services {
 
 async function signIn(email: string, password = 'synthetic-password-1') {
   const user = userEvent.setup()
-  await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+  await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
   await user.type(screen.getByLabelText('Email'), email)
   await user.type(screen.getByLabelText('Password'), password)
   await user.click(screen.getByRole('button', { name: 'Sign in' }))
@@ -26,7 +26,7 @@ afterEach(() => {
 describe('signing in (demo backend)', () => {
   it('shows the sign-in screen first, with no way to register', async () => {
     render(<Root services={mockServices()} />)
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
     expect(screen.queryByRole('link', { name: /sign up|register|create account/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /sign up|register/i })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
@@ -42,7 +42,7 @@ describe('signing in (demo backend)', () => {
     expect(within(account).getByText('Clinician')).toBeInTheDocument()
 
     await user.click(within(account).getByRole('button', { name: 'Sign out' }))
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
     expect(screen.getByText(/you have signed out/i)).toBeInTheDocument()
   })
 
@@ -108,10 +108,12 @@ describe('signing in (demo backend)', () => {
     await user.click(within(screen.getByRole('region', { name: 'Signed in' })).getByRole('button', { name: 'Sign out' }))
 
     user = await signIn('new.doctor@example.test', temporary)
-    await screen.findByRole('heading', { level: 1, name: 'Choose a new password' })
+    await screen.findByRole('heading', { level: 1, name: 'Choose your own password' })
     await user.type(screen.getByLabelText('Temporary password'), temporary)
     await user.type(screen.getByLabelText('New password'), 'too-short')
     await user.type(screen.getByLabelText('Repeat the new password'), 'too-short')
+    const rules = screen.getByRole('list', { name: 'Password requirements' })
+    expect(within(rules).getByText('At least 12 characters').parentElement).toHaveTextContent('(not yet)')
     await user.click(screen.getByRole('button', { name: /save password/i }))
     expect(await screen.findByText('Use at least 12 characters.')).toBeInTheDocument()
     expect(changed).not.toHaveBeenCalled()
@@ -145,7 +147,7 @@ describe('signing in (demo backend)', () => {
 
     await user.click(within(account).getByRole('button', { name: 'Sign out' }))
     await user.click(screen.getByRole('button', { name: 'Sign out and discard' }))
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
     expect(screen.queryByText(/Testpatient/)).not.toBeInTheDocument()
   })
 
@@ -161,6 +163,50 @@ describe('signing in (demo backend)', () => {
     user = await signIn('doctor@example.test')
     await screen.findByRole('heading', { level: 1, name: 'New encounter' })
     expect(screen.getByLabelText(/full name/i)).toHaveValue('')
+  })
+})
+
+describe('interactive helpers', () => {
+  it('reveals and hides the password on request', async () => {
+    const user = userEvent.setup()
+    render(<Root services={mockServices()} />)
+    const field = await screen.findByLabelText('Password')
+    expect(field).toHaveAttribute('type', 'password')
+    await user.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(field).toHaveAttribute('type', 'text')
+    await user.click(screen.getByRole('button', { name: 'Hide password' }))
+    expect(field).toHaveAttribute('type', 'password')
+  })
+
+  it('filters and searches the account list', async () => {
+    render(<Root services={mockServices()} />)
+    const user = await signIn('admin@example.test')
+    await user.click(await screen.findByRole('button', { name: /administration/i }))
+    for (const [email, name] of [
+      ['a.one@example.test', 'Dr One'],
+      ['b.two@example.test', 'Dr Two'],
+    ]) {
+      await user.click(await screen.findByRole('button', { name: 'New account' }))
+      const dialog = screen.getByRole('dialog', { name: 'New account' })
+      await user.type(within(dialog).getByLabelText('Email'), email)
+      await user.type(within(dialog).getByLabelText('Name'), name)
+      await user.click(within(dialog).getByRole('button', { name: 'Create account' }))
+      await user.click(await screen.findByRole('button', { name: 'Done' }))
+    }
+    const list = () => screen.getByRole('list', { name: 'Accounts' })
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(3)
+
+    await user.click(screen.getByRole('button', { name: /temporary password/i }))
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(2)
+
+    await user.type(screen.getByLabelText('Search accounts'), 'two')
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(list()).getByText('Dr Two')).toBeInTheDocument()
+
+    await user.clear(screen.getByLabelText('Search accounts'))
+    await user.type(screen.getByLabelText('Search accounts'), 'nobody')
+    await user.click(screen.getByRole('button', { name: 'Show all accounts' }))
+    expect(within(list()).getAllByRole('listitem')).toHaveLength(3)
   })
 })
 
@@ -215,7 +261,7 @@ describe('the session against the backend', () => {
     await user.click(screen.getByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))
 
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
     expect(screen.getByText(/encounter that was open has been discarded/i)).toBeInTheDocument()
     expect(screen.queryByText(/Testpatient/)).not.toBeInTheDocument()
   })
@@ -264,7 +310,7 @@ describe('the session against the backend', () => {
     await screen.findByText(/cannot reach airsoap/i)
     up = true
     await user.click(screen.getByRole('button', { name: 'Try again' }))
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
   })
 
   it('signs out on the server and keeps no credential in the page', async () => {
@@ -276,7 +322,7 @@ describe('the session against the backend', () => {
     render(<Root services={createDefaultServices({ VITE_AIRSOAP_API: 'http' })} />)
     await screen.findByRole('heading', { level: 1, name: 'New encounter' })
     await user.click(within(screen.getByRole('region', { name: 'Signed in' })).getByRole('button', { name: 'Sign out' }))
-    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to AirSOAP' })
     await waitFor(() =>
       expect(fetch.mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${String(url)}`)).toContain(
         'POST /api/auth/logout',

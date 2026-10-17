@@ -109,12 +109,12 @@ describe('AirSOAP workflow against the backend', () => {
     await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
-    expect(screen.getByText(/recorded by the microphone on this device/i)).toBeInTheDocument()
+    expect(screen.getByText(/microphone on this device records the visit/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))
     await screen.findByRole('heading', { level: 1, name: 'Recording in progress' })
-    await user.click(screen.getByRole('button', { name: /stop and generate note/i }))
+    await user.click(screen.getByRole('button', { name: /stop and transcribe/i }))
 
     await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
     const transcript = screen.getByRole('list', { name: 'Transcript segments' })

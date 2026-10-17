@@ -8,20 +8,28 @@
 @theme {
   --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
 
-  --color-ground: #f3f5f4;
-  --color-rail: #e8ecea;
+  /* Brand: taken from the AirSOAP logo. Navy carries the name, teal carries "SOAP" and the voice. */
+  --color-brand-navy: #09304b;
+  --color-brand-teal: #049f95;
+
+  --color-ground: #f2f5f7;
+  --color-rail: #e6ecf0;
   --color-surface: #ffffff;
-  --color-sunken: #f3f5f4;
+  --color-sunken: #f2f5f7;
 
-  --color-ink: #121a17;
-  --color-ink-2: #46524d;
-  --color-ink-3: #5a6661;
-  --color-field: #c9d1cd;
+  --color-ink: #0b2236;
+  --color-ink-2: #3d5163;
+  --color-ink-3: #546678;
+  --color-field: #c3cfd9;
 
-  --color-accent: #0b5f50;
-  --color-accent-hover: #084a3e;
-  --color-accent-soft: #dfece8;
-  --color-accent-ink: #083f35;
+  /* The logo teal, darkened until white text and teal text both pass 4.5:1. */
+  --color-accent: #00776e;
+  --color-accent-hover: #006159;
+  --color-accent-soft: #dcf0ed;
+  --color-accent-ink: #004a44;
+
+  --color-control-hover: #d9e1e7;
+  --color-control-active: #ccd6de;
 
   --color-danger: #b42318;
   --color-danger-hover: #912018;
@@ -37,6 +45,9 @@
 html {
   background: var(--color-ground);
   color: var(--color-ink);
+  caret-color: var(--color-accent);
+  scrollbar-color: var(--color-field) transparent;
+  accent-color: var(--color-accent);
   font-feature-settings: 'tnum' 0;
   -webkit-font-smoothing: antialiased;
 }

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { AccountSummary, MobileSignOut, type AccountInfo } from '../components/AccountSummary'
+import { Logo } from '../components/Logo'
 
 /** Layout for the administrator role: the same rail as the clinical workspace, with one section. */
 export function AdminShell({ account, children }: { account: AccountInfo; children: ReactNode }) {
@@ -7,8 +8,7 @@ export function AdminShell({ account, children }: { account: AccountInfo; childr
     <div className="min-h-dvh bg-ground text-ink">
       <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto bg-rail px-5 py-7 lg:flex">
         <div className="px-3">
-          <p className="text-lg font-semibold tracking-[-0.01em] text-ink">AirSOAP</p>
-          <p className="text-sm text-ink-3">Administration</p>
+          <Logo subtitle="Administration" />
         </div>
         <nav aria-label="Administration">
           <ul>
@@ -32,9 +32,7 @@ export function AdminShell({ account, children }: { account: AccountInfo; childr
 
       <header className="bg-rail px-5 py-4 lg:hidden">
         <div className="flex items-center justify-between gap-4">
-          <p className="text-lg font-semibold tracking-[-0.01em]">
-            AirSOAP <span className="text-sm font-normal text-ink-3">· Administration</span>
-          </p>
+          <Logo size="sm" subtitle="Administration" />
           <MobileSignOut account={account} />
         </div>
       </header>

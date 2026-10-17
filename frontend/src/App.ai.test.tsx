@@ -104,7 +104,7 @@ async function reachReview(user: User) {
   await user.click(screen.getByRole('checkbox', { name: /consented/i }))
   await user.click(screen.getByRole('button', { name: /start recording/i }))
   await screen.findByRole('heading', { level: 1, name: 'Recording in progress' })
-  await user.click(screen.getByRole('button', { name: /stop and generate note/i }))
+  await user.click(screen.getByRole('button', { name: /stop and transcribe/i }))
   await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
 }
 

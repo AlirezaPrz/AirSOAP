@@ -6,7 +6,7 @@ type Size = 'md' | 'lg'
 
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-accent text-white hover:bg-accent-hover active:bg-accent-ink focus-visible:outline-accent',
-  secondary: 'bg-rail text-ink hover:bg-[#dce2df] active:bg-[#d2d9d5] focus-visible:outline-accent',
+  secondary: 'bg-rail text-ink hover:bg-control-hover active:bg-control-active focus-visible:outline-accent',
   danger: 'bg-danger text-white hover:bg-danger-hover focus-visible:outline-danger',
   ghost: 'text-ink-2 hover:bg-rail hover:text-ink focus-visible:outline-accent',
 }

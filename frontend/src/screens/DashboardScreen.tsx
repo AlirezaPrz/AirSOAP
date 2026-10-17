@@ -2,7 +2,7 @@ import { useId, useRef, useState, type FormEvent } from 'react'
 import type { FailableOperation } from '../api/mockClient'
 import type { EncounterType } from '../api/types'
 import { Button } from '../components/Button'
-import { CheckIcon, XIcon } from '../components/icons'
+import { CheckIcon, ChevronDownIcon, XIcon } from '../components/icons'
 import { PageHeader, Panel, inputClass, labelClass } from '../components/ui'
 import { ENCOUNTER_TYPE_LABELS } from '../lib/format'
 import { SAMPLE_PATIENT } from '../mocks/encounter'
@@ -14,6 +14,45 @@ import {
   type PatientFormErrors,
   type PatientFormValues,
 } from '../workflow/validation'
+
+const STEPS: { title: string; body: string }[] = [
+  { title: 'Identify the patient', body: 'Name, date of birth and visit type. Only the age and visit type are shared with the AI.' },
+  { title: 'Record the visit', body: 'Confirm consent, then record. Stop when the visit is over; the audio is transcribed on this device.' },
+  { title: 'Check the transcript', body: 'Correct any words and mark each turn as Clinician or Patient.' },
+  { title: 'Draft and review the note', body: 'Generate the SOAP draft, edit every section, and optionally run a clinical review for suggestions.' },
+  { title: 'Submit', body: 'Confirm the note. In this prototype nothing is sent to an EMR, and the encounter is cleared.' },
+]
+
+/** A short, collapsible walkthrough of one encounter, for first-time users. */
+function HowItWorks() {
+  return (
+    <details className="group rounded-(--radius-panel) bg-surface">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-(--radius-panel) px-6 py-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-8 [&::-webkit-details-marker]:hidden">
+        <span>
+          <span className="block text-base font-semibold text-ink">How an encounter works</span>
+          <span className="block text-sm text-ink-3">Five steps, about as long as the visit itself</span>
+        </span>
+        <ChevronDownIcon className="size-5 shrink-0 text-ink-3 transition-transform duration-200 group-open:rotate-180" />
+      </summary>
+      <ol className="grid gap-x-8 gap-y-5 px-6 pb-7 sm:px-8 md:grid-cols-2">
+        {STEPS.map((step, index) => (
+          <li key={step.title} className="flex gap-3.5">
+            <span
+              aria-hidden
+              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent-ink tabular-nums"
+            >
+              {index + 1}
+            </span>
+            <span>
+              <span className="block text-[15px] font-semibold text-ink">{step.title}</span>
+              <span className="mt-0.5 block text-[15px] text-ink-2">{step.body}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  )
+}
 
 export type SimulatedFailure = FailableOperation | 'none'
 
@@ -228,6 +267,8 @@ export function DashboardScreen({ onStart, showDemoControls }: DashboardScreenPr
             ))}
           </ul>
         </section>
+
+        <HowItWorks />
 
         {showDemoControls && (
           <section className="flex flex-col gap-3 rounded-(--radius-panel) bg-rail px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">

@@ -17,10 +17,11 @@ interface RecordingScreenProps {
 }
 
 const GUIDANCE = [
-  'Speak naturally. The transcript labels clinician and patient turns.',
-  'Say vitals and exam findings aloud so they reach the Objective section.',
+  'Speak naturally. After the recording you mark which turns were yours and which were the patient’s.',
+  'Say vitals and exam findings out loud, so they can go into the Objective section.',
+  'Say your impression and plan out loud too. The draft only includes what was said.',
   'Avoid saying the patient’s full name or date of birth.',
-  'Everything can be edited before the note is submitted.',
+  'Nothing is final: you review and edit everything before it is submitted.',
 ]
 
 // Fixed, deterministic bar heights and timings for the simulated level meter.
@@ -92,7 +93,7 @@ export function RecordingScreen({
         description={
           simulated
             ? 'Audio capture is simulated in this prototype. No microphone is accessed.'
-            : 'Audio is recorded by the microphone on this device and never leaves it.'
+            : 'The microphone on this device records the visit. The audio never leaves the device and is deleted once it is transcribed.'
         }
         actions={
           <Button variant="secondary" onClick={() => setConfirmCancel(true)} disabled={pending}>
@@ -130,7 +131,7 @@ export function RecordingScreen({
                 onClick={() => run(onStopRecording, 'Could not stop the recording. Please try again.')}
               >
                 {!pending && <StopIcon className="size-4" />}
-                Stop and generate note
+                Stop and transcribe
               </Button>
             ) : (
               <>
@@ -167,7 +168,7 @@ export function RecordingScreen({
         </div>
 
         <div className="bg-sunken/70 p-6 sm:p-10 lg:p-8">
-          <h2 className="text-base font-semibold">For a better note</h2>
+          <h2 className="text-base font-semibold">For a better draft</h2>
           <ul className="mt-4 space-y-3.5 text-[15px] text-ink-2">
             {GUIDANCE.map((tip) => (
               <li key={tip} className="flex gap-3">
