@@ -248,9 +248,13 @@ SOAP_ANSWER = {
         "Felt feverish last night (about 101). Denies cough."
     ),
     "objective": "Temperature 38.3. Tonsils swollen.",
+    "assessmentStated": False,
     "assessment": "Not documented.",
+    "planStated": False,
     "plan": "Not documented.",
 }
+# Answers where the clinician did state an impression and a plan.
+STATED = {"assessmentStated": True, "planStated": True}
 
 
 def review_answer(**lists: list) -> dict:

@@ -5,6 +5,7 @@ import logging
 from helpers import (
     NOTE,
     SOAP_ANSWER,
+    STATED,
     FakeAiClient,
     FakeRecorder,
     FakeTranscriber,
@@ -44,7 +45,7 @@ def test_soap_job_runs_to_completion_and_returns_four_sections(settings):
 
 
 def test_soap_job_reports_unverified_numbers_as_warnings(settings):
-    answer = {**SOAP_ANSWER, "plan": "Review in 14 days."}
+    answer = {**SOAP_ANSWER, **STATED, "plan": "Review in 14 days."}
     with running_app(settings, ai_client=FakeAiClient([answer])) as client:
         body = wait_for_ai_job(client, start(client, "/api/ai/soap", soap_payload()), {"completed"})
     assert [w["field"] for w in body["soapResult"]["warnings"]] == ["plan"]
