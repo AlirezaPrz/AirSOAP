@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "no-console": "error",
+    "no-restricted-globals": [
+      "error",
+      { "name": "localStorage", "message": "Encounter data must stay in memory only." },
+      { "name": "sessionStorage", "message": "Encounter data must stay in memory only." },
+      { "name": "indexedDB", "message": "Encounter data must stay in memory only." }
+    ]
+  }
+}
