@@ -1,7 +1,7 @@
 # AirSOAP — Frontend prototype
 
 Phase 1–2 prototype of AirSOAP, a local-first AI SOAP documentation assistant for a Raspberry Pi 5.
-It runs the whole clinical workflow on **mock data**. There's no microphone access, no Whisper or Ollama, and no EMR.
+By default it runs the whole clinical workflow on **mock data**. With `VITE_AIRSOAP_API=http` it uses the Phase 3 backend (`../backend`) for real recording and Whisper transcription. SOAP generation (Ollama) and EMR integration are not connected yet.
 
 ```bash
 npm install
@@ -37,6 +37,17 @@ The **Demo options** on the dashboard can make transcription, SOAP generation, o
 - **Encounter data lives only in React state.** Nothing goes to localStorage, sessionStorage, IndexedDB, cookies, analytics, or the console. This is enforced by lint rules, a source scan test (`src/noPersistence.test.ts`), and a runtime test that spies on `Storage` and `console`.
 - When a submission completes, all encounter data is dropped from state and only the demo receipt is kept. Cancelling also clears everything.
 
-## Integrating the real backend
+## Using the backend
 
-Write an HTTP client that implements `AirSoapApi` against the contracts in `src/api/types.ts`. Make sure it honours `AbortSignal` and reports `onProgress`, for example from SSE. Then pass it in with `<App api={httpClient} />`. The screens and the state machine don't need to change.
+```bash
+VITE_AIRSOAP_API=http npm run dev   # Vite proxies /api to 127.0.0.1:8000 (override with AIRSOAP_BACKEND_URL)
+```
+
+`src/api/httpClient.ts` implements `AirSoapApi` against the FastAPI backend:
+- **Recording:** start and stop map to `/api/recording/*`. Only the backend's own recording ID is sent; the encounter ID and patient details stay in the browser.
+- **Transcription:** polls `GET /api/transcriptions/{jobId}` and reports `null` progress while whisper-server is working, which shows an indeterminate bar. Cancelling calls the job's cancel endpoint.
+- **Speakers:** Whisper does not detect them, so every transcript segment arrives as `unassigned` ("Unassigned" in the review screen) for the clinician to set.
+- **SOAP note:** every field is filled with "Placeholder, SOAP generation is not connected yet (Phase 4)".
+- **Demo submission:** stays local.
+
+See `../backend/README.md` for running the backend on the Mac (mock mode) or on the Raspberry Pi.

@@ -1,14 +1,14 @@
 /**
- * Request/response contracts for the planned AirSOAP backend (local services
- * running on the Raspberry Pi). The UI only talks to the `AirSoapApi`
- * interface in `client.ts`; today it is backed by `mockClient.ts`, later by an
- * HTTP client that implements the same contracts.
+ * Request/response contracts for the AirSOAP backend (local services running
+ * on the Raspberry Pi). The UI only talks to the `AirSoapApi` interface in
+ * `client.ts`, backed by `mockClient.ts` or by `httpClient.ts`.
  */
 
 /** ISO-8601 timestamp, e.g. "2026-10-17T14:03:00.000Z". */
 export type IsoDateTime = string
 
-export type Speaker = 'clinician' | 'patient'
+/** Whisper does not identify speakers, so real transcripts start as `unassigned`. */
+export type Speaker = 'clinician' | 'patient' | 'unassigned'
 
 export interface TranscriptSegment {
   id: string
@@ -70,6 +70,8 @@ export interface StopRecordingRequest {
 export interface StopRecordingResponse {
   recordingId: string
   durationMs: number
+  /** Transcription job queued by the backend when the recording stopped (absent in the mock). */
+  jobId?: string
 }
 
 /** Deletes captured audio when an encounter is cancelled. */
@@ -89,6 +91,25 @@ export interface TranscriptionRequest {
 export interface TranscriptionResponse {
   transcript: Transcript
   model: string
+}
+
+/** Lifecycle of a backend transcription job. */
+export type TranscriptionJobStatus = 'queued' | 'processing' | 'completed' | 'cancelled' | 'error'
+
+/** `GET /api/transcriptions/{jobId}`: the backend's wire format, polled by the HTTP client. */
+export interface TranscriptionJobResponse {
+  jobId: string
+  status: TranscriptionJobStatus
+  /** 0–100; null while processing, because whisper-server reports no progress. */
+  progress: number | null
+  audioDurationMs: number
+  transcript: {
+    text: string
+    language: string
+    durationMs: number
+    segments: { id: string; startMs: number; endMs: number; text: string }[]
+  } | null
+  error: ApiError | null
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +143,8 @@ export type ProcessingStage = 'transcription' | 'soap-generation'
 /** Progress event streamed by long-running jobs (e.g. over SSE). */
 export interface ProgressUpdate {
   stage: ProcessingStage
-  /** 0–1 */
-  progress: number
+  /** 0–1, or null while the amount of work left is unknown. */
+  progress: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +180,15 @@ export type ApiErrorCode =
   | 'SUBMISSION_FAILED'
   | 'UNAVAILABLE'
   | 'UNKNOWN'
+  // Returned by the backend:
+  | 'RECORDING_IN_PROGRESS'
+  | 'NO_ACTIVE_RECORDING'
+  | 'RECORDER_UNAVAILABLE'
+  | 'EMPTY_RECORDING'
+  | 'QUEUE_FULL'
+  | 'JOB_NOT_FOUND'
+  | 'TRANSCRIBER_UNAVAILABLE'
+  | 'TRANSCRIPTION_TIMEOUT'
 
 export interface ApiError {
   code: ApiErrorCode

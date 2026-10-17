@@ -19,6 +19,7 @@ interface ReviewScreenProps {
 const SPEAKER_STYLES: Record<Speaker, string> = {
   clinician: 'bg-accent-soft text-accent-ink',
   patient: 'bg-rail text-ink',
+  unassigned: 'bg-warn-soft text-warn-ink',
 }
 
 function SegmentEditor({
@@ -121,7 +122,8 @@ export function ReviewScreen({
           <div className="flex items-baseline justify-between gap-4 px-6 pt-6 sm:px-8 sm:pt-7">
             <h2 className="text-lg font-semibold">Transcript</h2>
             <p className="text-sm text-ink-3 tabular-nums">
-              {transcript.segments.length} turns · {formatDuration(transcript.durationMs)}
+              {transcript.segments.length} {transcript.segments.length === 1 ? 'turn' : 'turns'} ·{' '}
+              {formatDuration(transcript.durationMs)}
             </p>
           </div>
           <ol
@@ -196,7 +198,9 @@ export function ReviewScreen({
             <dt className="text-ink-3">Note</dt>
             <dd className="text-ink">All four sections complete</dd>
             <dt className="text-ink-3">Transcript</dt>
-            <dd className="text-ink">{transcript.segments.length} turns</dd>
+            <dd className="text-ink">
+              {transcript.segments.length} {transcript.segments.length === 1 ? 'turn' : 'turns'}
+            </dd>
           </dl>
         </ConfirmDialog>
       )}

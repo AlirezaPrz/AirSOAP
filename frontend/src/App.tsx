@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AirSoapApi } from './api/client'
-import { createMockApi, isMockApi } from './api/mockClient'
+import { createDefaultApi } from './api'
+import { isMockApi } from './api/mockClient'
 import { AppShell } from './components/AppShell'
 import { CompletionScreen } from './screens/CompletionScreen'
 import { DashboardScreen, type SimulatedFailure } from './screens/DashboardScreen'
@@ -10,12 +11,12 @@ import { ReviewScreen } from './screens/ReviewScreen'
 import { useEncounterWorkflow, type StartEncounterInput } from './workflow/useEncounterWorkflow'
 
 interface AppProps {
-  /** Backend implementation; defaults to the in-memory mock. */
+  /** Backend implementation; defaults to the mock, or the local backend with VITE_AIRSOAP_API=http. */
   api?: AirSoapApi
 }
 
 export default function App({ api: providedApi }: AppProps) {
-  const [defaultApi] = useState(() => createMockApi())
+  const [defaultApi] = useState(() => createDefaultApi())
   const api = providedApi ?? defaultApi
   const workflow = useEncounterWorkflow(api)
   const { state } = workflow
@@ -38,6 +39,7 @@ export default function App({ api: providedApi }: AppProps) {
           <RecordingScreen
             key={state.status}
             state={state}
+            simulated={isMockApi(api)}
             onStartRecording={workflow.startRecording}
             onStopRecording={workflow.stopRecording}
             onCancel={workflow.cancelEncounter}

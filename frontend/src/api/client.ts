@@ -19,8 +19,8 @@ export interface RequestOptions {
 }
 
 export interface JobOptions extends RequestOptions {
-  /** Called with values from 0 to 1 as the job advances. */
-  onProgress?: (progress: number) => void
+  /** Called with values from 0 to 1 as the job advances, or null while progress is unknown. */
+  onProgress?: (progress: number | null) => void
 }
 
 /** The only backend surface the UI depends on. */
