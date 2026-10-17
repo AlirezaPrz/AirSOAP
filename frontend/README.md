@@ -1,7 +1,7 @@
-# AirSOAP — Frontend prototype
+# AirSOAP — Frontend
 
-Phase 1–2 prototype of AirSOAP, a local-first AI SOAP documentation assistant for a Raspberry Pi 5.
-By default it runs the whole clinical workflow on **mock data**. With `VITE_AIRSOAP_API=http` it uses the backend (`../backend`) for real recording, Whisper transcription, and SOAP generation and Clinical Review with the local Qwen model. EMR integration is not connected.
+The frontend of AirSOAP, a local-first AI SOAP documentation assistant for a Raspberry Pi 5.
+By default it runs the whole clinical workflow on **mock data**, including a simulated sign-in where any email and password work (an email starting with `admin` gets both roles, so the role choice and the account screens can be tried). With `VITE_AIRSOAP_API=http` it uses the backend (`../backend`) for real recording, Whisper transcription, and SOAP generation and Clinical Review with the local Qwen model. EMR integration is not connected.
 
 ```bash
 npm install
@@ -14,7 +14,9 @@ npm run build
 
 ## Workflow
 
-Dashboard (patient ID) → Record → Processing (transcription → SOAP generation) → Review and edit → Confirm demo submission → Completion → back to the dashboard (encounter reset).
+Sign in → (choose a new password, if it is a temporary one) → (choose clinical workspace or administration, if the account has both roles) → the workspace or the account screen.
+
+In the workspace: Dashboard (patient ID) → Record → Processing (transcription → SOAP generation) → Review and edit → Confirm demo submission → Completion → back to the dashboard (encounter reset).
 
 The **Demo options** on the dashboard can make transcription, SOAP generation, or submission fail once, so you can see the error and retry states.
 
@@ -22,7 +24,12 @@ The **Demo options** on the dashboard can make transcription, SOAP generation, o
 
 | Path | Purpose |
 | --- | --- |
-| `src/api/types.ts` | Request/response contracts for the planned backend |
+| `src/Root.tsx` | Follows the server's view of the session and picks the screen: sign-in, password change, role choice, workspace (`App`) or accounts |
+| `src/auth/*` | Sign-in, password change and role choice screens; `useSessionKeepAlive` |
+| `src/admin/*` | The administrator's account list, create, edit, disable and reset dialogs |
+| `src/api/request.ts` | The one way to call the backend: app header, same-origin cookie, "session ended" signal |
+| `src/api/auth.ts` | `AuthApi` over HTTP, and the in-memory mock |
+| `src/api/types.ts` | Request/response contracts for the backend |
 | `src/api/client.ts` | `AirSoapApi` interface (the only backend surface the UI uses), plus error helpers |
 | `src/api/mockClient.ts` | Mock implementation with simulated latency, progress, abort, and failure injection |
 | `src/workflow/reducer.ts` | Pure encounter state machine (`idle → ready → recording → processing → review → confirming → submitting → completed`) |
@@ -36,6 +43,14 @@ The **Demo options** on the dashboard can make transcription, SOAP generation, o
 - **The AI never receives the patient's name, date of birth, or MRN.** `SoapGenerationRequest` has no fields for them. `buildSoapRequest()` sends only the transcript (with identifiers redacted in case they were spoken), the age in whole years (`'90+'` for 90 and over), and the encounter type.
 - **Encounter data lives only in React state.** Nothing goes to localStorage, sessionStorage, IndexedDB, cookies, analytics, or the console. This is enforced by lint rules, a source scan test (`src/noPersistence.test.ts`), and a runtime test that spies on `Storage` and `console`.
 - When a submission completes, all encounter data is dropped from state and only the demo receipt is kept. Cancelling also clears everything.
+
+## Signing in
+
+- **The session is an HttpOnly cookie** set by the backend. The frontend never sees it, and stores nothing about the session or the account in localStorage, sessionStorage, IndexedDB or a URL (the source scan test checks this too). After a reload, `GET /api/auth/me` tells the app who is signed in.
+- **Every request** carries `X-AirSOAP-Request: 1`, which the backend requires as proof it came from this app (`src/api/request.ts`).
+- **When the session ends** (sign-out, 30 idle minutes, 12 hours, password change, the account disabled), the app returns to the sign-in screen and unmounts the workspace, which discards the encounter. The backend discards the recording and jobs too. Signing out during an encounter asks for confirmation first.
+- **Activity keeps the session alive:** a click or key press refreshes it at most every two minutes, so a long edit does not time out. Without activity the screen clears when the session expires.
+- **Temporary passwords** created by an administrator are shown once in a dialog and dropped from memory when it closes.
 
 ## Using the backend
 
