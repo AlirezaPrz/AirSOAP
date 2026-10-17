@@ -1,5 +1,16 @@
 // Synthetic data only. The patient and the conversation are fictional.
-import type { EncounterType, PatientIdentity, SoapGenerationContext, SoapNote, Speaker, Transcript } from '../api/types'
+import type {
+  AiSegment,
+  ClinicalReview,
+  ClinicalReviewRequest,
+  EncounterType,
+  PatientIdentity,
+  ReviewSuggestion,
+  SoapGenerationContext,
+  SoapNote,
+  Speaker,
+  Transcript,
+} from '../api/types'
 
 export const SAMPLE_PATIENT: PatientIdentity & { encounterType: EncounterType } = {
   fullName: 'Jordan Testpatient',
@@ -8,6 +19,7 @@ export const SAMPLE_PATIENT: PatientIdentity & { encounterType: EncounterType } 
   encounterType: 'acute',
 }
 
+/** Who really spoke each line. The mock transcript hides this, like real Whisper output: speakers start `unknown`. */
 const SCRIPT: ReadonlyArray<[Speaker, string]> = [
   ['clinician', 'Good morning. What brings you in today?'],
   ['patient', "I've had a sore throat for about three days now, and it keeps getting worse. It really hurts to swallow."],
@@ -38,11 +50,11 @@ const SCRIPT: ReadonlyArray<[Speaker, string]> = [
 /** Roughly 15 characters per second of speech plus a short pause. */
 export function createMockTranscript(): Transcript {
   let cursor = 0
-  const segments = SCRIPT.map(([speaker, text], index) => {
+  const segments = SCRIPT.map(([, text], index) => {
     const startMs = cursor
     const endMs = startMs + Math.round((text.length / 15) * 1000)
     cursor = endMs + 600
-    return { id: `seg-${index + 1}`, speaker, startMs, endMs, text }
+    return { id: `seg-${index + 1}`, speaker: 'unknown' as const, startMs, endMs, text }
   })
   return { segments, language: 'en', durationMs: cursor }
 }
@@ -61,5 +73,81 @@ export function createMockSoap({ patientAge }: SoapGenerationContext): SoapNote 
       '3. Encourage oral fluids; remain home until ≥12 hours of antibiotic therapy.',
       '4. Return precautions: no improvement in 48–72 hours, difficulty breathing, or inability to swallow liquids.',
     ].join('\n'),
+  }
+}
+
+/** Small deterministic hash, so mock suggestions keep the same ID when the review is rerun. */
+function stableId(category: string, description: string): string {
+  let hash = 5381
+  for (const char of `${category}|${description.toLowerCase()}`) hash = ((hash << 5) + hash + char.charCodeAt(0)) >>> 0
+  return `sug-${hash.toString(16).padStart(8, '0')}`
+}
+
+const firstWords = (text: string, count = 10) => text.trim().split(/\s+/).slice(0, count).join(' ')
+
+/** Mock suggestions that quote the request's own text, as the real backend requires. */
+export function createMockReview({ segments, soap }: ClinicalReviewRequest): ClinicalReview {
+  const pick = (speaker: Speaker): AiSegment | undefined =>
+    segments.find((segment) => segment.speaker === speaker) ?? segments[0]
+  const patientLine = pick('patient')
+  const clinicianLine = pick('clinician')
+  const planQuote = firstWords(soap.plan)
+
+  const make = (
+    category: ReviewSuggestion['category'],
+    description: string,
+    rationale: string,
+    segment: AiSegment | undefined,
+    extra: Partial<ReviewSuggestion> = {},
+  ): ReviewSuggestion => ({
+    id: stableId(category, description),
+    category,
+    description,
+    rationale: `${rationale} (Mock output; no AI model was used.)`,
+    uncertainty: 'medium',
+    evidence: segment ? [{ source: 'transcript', quote: firstWords(segment.text), segmentId: segment.id }] : [],
+    ...extra,
+  })
+
+  return {
+    informationGaps: [
+      make(
+        'information_gap',
+        'The transcript does not say how the symptoms have changed since they began.',
+        'Progression helps to judge urgency.',
+        patientLine,
+        { gapType: 'uncertain' },
+      ),
+    ],
+    followUpQuestions: [
+      make(
+        'follow_up_question',
+        'Has anything made the symptoms better or worse?',
+        'The patient described the symptoms, but relieving and aggravating factors were not discussed.',
+        patientLine,
+      ),
+    ],
+    differentialConsiderations: [
+      make(
+        'differential_consideration',
+        'A viral cause, alongside the condition in your assessment',
+        'The documented symptoms are not specific to one cause.',
+        clinicianLine,
+        { missingInformation: 'Test results and exposure history are not documented.' },
+      ),
+    ],
+    documentationInconsistencies: planQuote
+      ? [
+          {
+            id: stableId('documentation_inconsistency', 'The plan could be checked against the conversation.'),
+            category: 'documentation_inconsistency',
+            description: 'The plan could be checked against the conversation.',
+            rationale: 'Confirm that each item in the plan was discussed. (Mock output; no AI model was used.)',
+            uncertainty: 'low',
+            evidence: [{ source: 'note', quote: planQuote, field: 'plan' }],
+          },
+        ]
+      : [],
+    omittedUnverified: 0,
   }
 }

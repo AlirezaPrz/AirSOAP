@@ -7,10 +7,12 @@ import {
 } from './client'
 import { createMockApi } from './mockClient'
 import type {
+  AiJobResponse,
   ApiError,
   ApiErrorCode,
+  ClinicalReviewRequest,
   DiscardRecordingRequest,
-  SoapNote,
+  SoapGenerationRequest,
   StartRecordingRequest,
   StartRecordingResponse,
   StopRecordingRequest,
@@ -20,9 +22,6 @@ import type {
   TranscriptionRequest,
   TranscriptionResponse,
 } from './types'
-
-/** Shown in every SOAP field until local note generation exists. */
-export const SOAP_PLACEHOLDER = 'Placeholder, SOAP generation is not connected yet (Phase 4)'
 
 export interface HttpApiOptions {
   /** '' means same origin: the Vite dev proxy, or the backend serving the built frontend. */
@@ -66,7 +65,7 @@ function toTranscript(wire: NonNullable<TranscriptionJobResponse['transcript']>)
     durationMs: wire.durationMs,
     segments: wire.segments.map((segment) => ({
       id: segment.id,
-      speaker: 'unassigned',
+      speaker: 'unknown',
       startMs: segment.startMs,
       endMs: segment.endMs,
       text: segment.text,
@@ -75,8 +74,8 @@ function toTranscript(wire: NonNullable<TranscriptionJobResponse['transcript']>)
 }
 
 /**
- * Talks to the local FastAPI backend for recording and transcription.
- * SOAP generation is not connected yet (Phase 4) and demo submission stays local.
+ * Talks to the local FastAPI backend for recording, transcription, SOAP generation and
+ * Clinical Review. Demo submission stays local: no EMR is connected.
  */
 export function createHttpApi({
   baseUrl = '',
@@ -88,7 +87,7 @@ export function createHttpApi({
   const jobs = new Map<string, string>()
   const local = createMockApi()
 
-  async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     let response: Response
     try {
       response = await fetchImpl(`${baseUrl}${path}`, {
@@ -109,6 +108,35 @@ export function createHttpApi({
     request('POST', `/api/transcriptions/${jobId}/cancel`).catch(() => {
       // Best effort: the job may already be finished or expired.
     })
+
+  /** Drops an AI job (cancelling it if it is still running) so its result does not linger in backend memory. */
+  const deleteAiJob = (jobId: string) =>
+    request('DELETE', `/api/ai/jobs/${jobId}`).catch(() => {
+      // Best effort: the job may already have expired.
+    })
+
+  /** Starts an AI task and polls until it finishes. Aborting cancels the backend job. */
+  async function runAiJob(path: string, body: unknown, signal: AbortSignal | undefined): Promise<AiJobResponse> {
+    const { jobId } = await request<{ jobId: string }>('POST', path, body, signal)
+    const onAbort = () => void deleteAiJob(jobId)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      for (;;) {
+        const job = await request<AiJobResponse>('GET', `/api/ai/jobs/${jobId}`, undefined, signal)
+        if (job.status === 'completed') return job
+        if (job.status === 'error') {
+          throw new ApiRequestError(
+            job.error ?? { code: 'AI_FAILED', message: 'The AI task failed.', retryable: true },
+          )
+        }
+        if (job.status === 'cancelled') throw cancelledError()
+        await wait(pollIntervalMs, signal)
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+      if (!signal?.aborted) void deleteAiJob(jobId) // we have the result (or the failure): forget it
+    }
+  }
 
   return {
     async startRecording(_request: StartRecordingRequest, options?: RequestOptions) {
@@ -177,16 +205,25 @@ export function createHttpApi({
       }
     },
 
-    async generateSoap(_request, options) {
-      if (options?.signal?.aborted) throw cancelledError()
-      options?.onProgress?.(1)
-      const soap: SoapNote = {
-        subjective: SOAP_PLACEHOLDER,
-        objective: SOAP_PLACEHOLDER,
-        assessment: SOAP_PLACEHOLDER,
-        plan: SOAP_PLACEHOLDER,
+    async generateSoap(request: SoapGenerationRequest, options?: RequestOptions) {
+      const job = await runAiJob('/api/ai/soap', request, options?.signal)
+      if (!job.soapResult) {
+        throw new ApiRequestError({ code: 'AI_FAILED', message: 'The AI task returned no note.', retryable: true })
       }
-      return { soap, model: 'not connected (Phase 4)', generatedAt: new Date().toISOString() }
+      return {
+        soap: job.soapResult.soap,
+        warnings: job.soapResult.warnings,
+        model: 'local Qwen 2.5 3B',
+        generatedAt: new Date().toISOString(),
+      }
+    },
+
+    async runClinicalReview(request: ClinicalReviewRequest, options?: RequestOptions) {
+      const job = await runAiJob('/api/ai/clinical-review', request, options?.signal)
+      if (!job.reviewResult) {
+        throw new ApiRequestError({ code: 'AI_FAILED', message: 'The AI task returned no review.', retryable: true })
+      }
+      return { review: job.reviewResult, model: 'local Qwen 2.5 3B', generatedAt: new Date().toISOString() }
     },
 
     submitDemo: (submitRequest, options) => local.submitDemo(submitRequest, options),
