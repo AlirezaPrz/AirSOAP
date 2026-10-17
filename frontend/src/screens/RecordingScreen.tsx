@@ -105,7 +105,10 @@ export function RecordingScreen({
       <Panel className="grid grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 p-6 sm:p-10">
           <p className={`flex items-center gap-2 text-[15px] font-medium ${recording ? 'text-danger' : 'text-ink-3'}`}>
-            <span aria-hidden className={`size-2.5 rounded-full ${recording ? 'bg-danger' : 'bg-field'}`} />
+            <span aria-hidden className="relative flex size-2.5">
+              {recording && <span className="absolute inset-0 animate-ping rounded-full bg-danger/60" />}
+              <span className={`relative size-2.5 rounded-full ${recording ? 'bg-danger' : 'bg-field'}`} />
+            </span>
             {recording ? 'Recording' : 'Not recording'}
           </p>
           <p

@@ -76,6 +76,38 @@ function StageRow({
   )
 }
 
+const WAVE = [38, 64, 90, 56, 100, 72, 44, 82, 60, 30, 70, 50]
+const LINES = ['92%', '78%', '86%', '64%']
+
+/** Speech going in on the left, lines of text coming out on the right, while Whisper works. */
+function TranscribingVisual() {
+  return (
+    <div aria-hidden className="mb-10 flex items-center gap-4 rounded-(--radius-panel) bg-sunken px-4 py-5 sm:gap-10 sm:px-10 sm:py-6">
+      <div className="flex h-14 w-16 shrink-0 items-center gap-[3px] sm:h-16 sm:w-36 sm:gap-[5px]">
+        {WAVE.map((height, i) => (
+          <span
+            key={i}
+            className="level-bar w-1.5 flex-1 rounded-full bg-brand-teal"
+            style={{ height: `${height}%`, animationDuration: `${900 + ((i * 137) % 500)}ms`, animationDelay: `${(i * 70) % 400}ms` }}
+          />
+        ))}
+      </div>
+      <svg viewBox="0 0 40 12" className="w-8 shrink-0 text-ink-3 sm:w-10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 6h34M31 1.5 36 6l-5 4.5" />
+      </svg>
+      <div className="flex-1 space-y-2.5 rounded-(--radius-control) bg-surface px-4 py-4">
+        {LINES.map((width, i) => (
+          <span
+            key={i}
+            className="type-line block h-2 rounded-full bg-brand-navy/70"
+            style={{ width, animationDelay: `${i * 450}ms` }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function stageStatus(stage: ProcessingStage, current: ProcessingStage, failed: boolean): StepStatus {
   const index = STAGES.indexOf(stage)
   const currentIndex = STAGES.indexOf(current)
@@ -123,6 +155,8 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
             </Alert>
           </div>
         )}
+
+        {!failed && <TranscribingVisual />}
 
         <p className="sr-only" aria-live="polite">
           {failed ? '' : `${STAGE_LABELS[stage]} in progress`}

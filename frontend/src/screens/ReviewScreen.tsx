@@ -3,7 +3,7 @@ import type { SoapField, Speaker, TranscriptSegment } from '../api/types'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ClinicalReviewPanel } from '../components/ClinicalReviewPanel'
-import { Spinner } from '../components/icons'
+import { CheckIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, Panel, inputClass } from '../components/ui'
 import { ENCOUNTER_TYPE_LABELS, SOAP_FIELD_META, SPEAKER_LABELS, formatDate, formatDuration } from '../lib/format'
 import { calculateAge, toModelAge } from '../workflow/privacy'
@@ -79,6 +79,58 @@ function SegmentEditor({
   )
 }
 
+type StepState = 'done' | 'current' | 'todo'
+
+/**
+ * The three things that make a note ready, always in view while scrolling. Each step shows its
+ * state and jumps to its section.
+ */
+function ReviewProgress({ steps }: { steps: { target: string; label: string; detail: string; state: StepState }[] }) {
+  const jump = (id: string) => {
+    const target = document.getElementById(id)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    target?.focus({ preventScroll: true })
+  }
+  return (
+    <nav aria-label="Review steps" className="-mt-3 mb-5">
+      <ol className="grid grid-cols-3 gap-1.5 sm:gap-2">
+        {steps.map((step, index) => (
+          <li key={step.label}>
+            <button
+              type="button"
+              onClick={() => jump(step.target)}
+              aria-current={step.state === 'current' ? 'step' : undefined}
+              className={`group flex w-full flex-col items-start gap-1.5 rounded-(--radius-control) px-2 py-2 text-left sm:flex-row sm:items-center sm:gap-3 sm:px-3 sm:py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                step.state === 'current' ? 'bg-surface' : 'hover:bg-rail'
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold tabular-nums transition-colors duration-300 ${
+                  step.state === 'done'
+                    ? 'bg-accent text-white'
+                    : step.state === 'current'
+                      ? 'bg-accent-soft text-accent-ink'
+                      : 'bg-rail text-ink-3'
+                }`}
+              >
+                {step.state === 'done' ? <CheckIcon className="size-3.5" strokeWidth={3} /> : index + 1}
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-sm leading-tight font-medium sm:text-[15px] ${step.state === 'todo' ? 'text-ink-2' : 'text-ink'}`}>
+                  {step.label}
+                </span>
+                <span className="hidden truncate text-sm text-ink-3 sm:block">{step.detail}</span>
+              </span>
+              <span className="sr-only">({step.state === 'done' ? 'done' : step.state === 'current' ? 'next' : 'not yet'})</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  )
+}
+
 export function ReviewScreen({
   state,
   onEditSegment,
@@ -104,6 +156,39 @@ export function ReviewScreen({
   const { patient, encounterType } = state.encounter
   const age = calculateAge(patient.dateOfBirth)
   const labelled = transcript.segments.filter((segment) => segment.speaker !== 'unknown').length
+  const total = transcript.segments.length
+  const allLabelled = total > 0 && labelled === total
+  const complete = hasContent && missing.length === 0
+  const steps: { target: string; label: string; detail: string; state: StepState }[] = [
+    {
+      target: `${id}-transcript`,
+      label: 'Label speakers',
+      detail: allLabelled ? 'Every turn labelled' : `${labelled} of ${total} turns`,
+      state: allLabelled ? 'done' : 'current',
+    },
+    {
+      target: `${id}-soap`,
+      label: 'Draft the note',
+      detail: generating ? 'Drafting…' : hasContent ? 'Draft ready' : 'Not drafted yet',
+      state: hasContent ? 'done' : allLabelled ? 'current' : 'todo',
+    },
+    {
+      target: `${id}-soap`,
+      label: 'Check every section',
+      detail: complete ? 'Ready to submit' : hasContent ? `${missing.length} empty` : 'After the draft',
+      state: complete ? 'done' : hasContent ? 'current' : 'todo',
+    },
+  ]
+
+  /** Two-person visits usually alternate; one click gets most labels right, then fix the odd one. */
+  const alternate = () =>
+    transcript.segments.forEach((segment, index) =>
+      onEditSegment(segment.id, { speaker: index % 2 === 0 ? 'clinician' : 'patient' }),
+    )
+  const fillRemaining = (speaker: Speaker) =>
+    transcript.segments.forEach((segment) => {
+      if (segment.speaker === 'unknown') onEditSegment(segment.id, { speaker })
+    })
 
   return (
     <>
@@ -122,6 +207,7 @@ export function ReviewScreen({
             </>
           }
         />
+        <ReviewProgress steps={steps} />
       </div>
 
       {(hasContent || missing.length < 4) && (
@@ -140,7 +226,9 @@ export function ReviewScreen({
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Panel>
           <div className="flex items-baseline justify-between gap-4 px-6 pt-6 sm:px-8 sm:pt-7">
-            <h2 className="text-lg font-semibold">Transcript</h2>
+            <h2 id={`${id}-transcript`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
+              Transcript
+            </h2>
             <p className="text-sm text-ink-3 tabular-nums">
               {transcript.segments.length} {transcript.segments.length === 1 ? 'turn' : 'turns'} ·{' '}
               {formatDuration(transcript.durationMs)}
@@ -153,11 +241,44 @@ export function ReviewScreen({
                 Patient. The note and the clinical review use your labels.
               </Alert>
             )}
-            {labelled > 0 && (
-              <p className="text-sm text-ink-3 tabular-nums">
-                {labelled} of {transcript.segments.length} turns labelled
-              </p>
-            )}
+            <div>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-ink-2">Speakers labelled</span>
+                <span className="text-ink-3 tabular-nums">
+                  {labelled} of {total} turns labelled
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Speakers labelled"
+                aria-valuemin={0}
+                aria-valuemax={total}
+                aria-valuenow={labelled}
+                className="mt-2 h-1.5 overflow-hidden rounded-full bg-rail"
+              >
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-500 ease-(--ease-out-expo)"
+                  style={{ width: `${total ? (labelled / total) * 100 : 0}%` }}
+                />
+              </div>
+              {editable && !allLabelled && total > 1 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="secondary" className="h-8 px-3 text-sm" onClick={alternate}>
+                    Alternate, clinician first
+                  </Button>
+                  {labelled > 0 && (
+                    <>
+                      <Button variant="secondary" className="h-8 px-3 text-sm" onClick={() => fillRemaining('patient')}>
+                        Rest are patient
+                      </Button>
+                      <Button variant="secondary" className="h-8 px-3 text-sm" onClick={() => fillRemaining('clinician')}>
+                        Rest are clinician
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <ol aria-label="Transcript segments" className="mt-5 space-y-5 px-6 pb-7 sm:px-8">
             {transcript.segments.map((segment, index) => (
@@ -168,7 +289,9 @@ export function ReviewScreen({
 
         <Panel className="px-6 py-6 sm:px-8 sm:py-7">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">SOAP note</h2>
+            <h2 id={`${id}-soap`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
+              SOAP note
+            </h2>
             {hasContent && !generating && (
               <Button variant="secondary" onClick={() => setConfirmRegenerate(true)} disabled={!editable}>
                 Regenerate

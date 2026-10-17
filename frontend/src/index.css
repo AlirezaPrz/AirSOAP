@@ -95,3 +95,101 @@ html {
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * Motion. One vocabulary for the whole app: things arrive by rising a few pixels out of a
+ * slight blur, with an exponential ease-out. Everything is visible without it.
+ */
+@theme {
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+}
+
+/* backwards, not both: nothing (no filter, no transform) stays on the element afterwards, so fixed
+   dialogs and sticky headers inside an arrived screen keep working. */
+.arrive {
+  animation: arrive 520ms var(--ease-out-expo) backwards;
+}
+
+.arrive-1 {
+  animation-delay: 60ms;
+}
+.arrive-2 {
+  animation-delay: 120ms;
+}
+.arrive-3 {
+  animation-delay: 180ms;
+}
+
+/* The completion check draws itself once. */
+@keyframes draw {
+  from {
+    stroke-dashoffset: var(--length, 60);
+  }
+}
+
+.draw {
+  stroke-dasharray: var(--length, 60);
+  animation: draw 700ms 200ms var(--ease-out-expo) both;
+}
+
+/* Slide progress on the sign-in showcase. */
+@keyframes fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.fill {
+  transform-origin: left;
+  animation: fill linear both;
+}
+
+/* Lines of a transcript appearing while Whisper works. */
+@keyframes type-line {
+  0% {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  35%,
+  80% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+.type-line {
+  transform-origin: left;
+  animation: type-line 3.2s var(--ease-out-expo) infinite;
+}
+
+/* Toasts slide in from the edge. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+
+.toast-in {
+  animation: toast-in 380ms var(--ease-out-expo) backwards;
+}
+
+/* Buttons give a little under the finger. */
+button:not(:disabled):active {
+  transform: scale(0.98);
+}

@@ -5,6 +5,7 @@ import { Button } from '../components/Button'
 import { ConfirmDialog, Dialog } from '../components/ConfirmDialog'
 import { SearchIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, inputClass, labelClass } from '../components/ui'
+import { useToast } from '../lib/toast'
 import { FILTERS, type Filter } from './filters'
 
 const ROLES: Role[] = ['clinician', 'admin']
@@ -55,6 +56,7 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
   const [attempt, setAttempt] = useState(0)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const toast = useToast()
 
   useEffect(() => {
     let current = true
@@ -129,8 +131,9 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
 
       {accounts && (
         <ul aria-label="Accounts" className="space-y-2">
-          {visible(accounts, query, filter).map((account) => (
+          {visible(accounts, query, filter).map((account, index) => (
             <AccountRow
+              index={index}
               key={account.id}
               account={account}
               isYou={account.id === currentUserId}
@@ -158,8 +161,17 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
           isYou={dialog.account.id === currentUserId}
           onClose={() => setDialog(null)}
           onSaved={(updated) => {
+            const before = dialog.account
             replace(updated)
             setDialog(null)
+            toast({
+              text:
+                before.isActive && !updated.isActive
+                  ? `${updated.displayName} is disabled and has been signed out.`
+                  : !before.isActive && updated.isActive
+                    ? `${updated.displayName} can sign in again.`
+                    : `Changes to ${updated.displayName} saved.`,
+            })
           }}
         />
       )}
@@ -175,7 +187,20 @@ export function AccountsScreen({ auth, currentUserId }: AccountsScreenProps) {
         />
       )}
       {dialog?.kind === 'temporary' && (
-        <TemporaryPasswordDialog result={dialog.result} reason={dialog.reason} onClose={() => setDialog(null)} />
+        <TemporaryPasswordDialog
+          result={dialog.result}
+          reason={dialog.reason}
+          onClose={() => {
+            const { user } = dialog.result
+            setDialog(null)
+            toast({
+              text:
+                dialog.reason === 'created'
+                  ? `${user.displayName} can now sign in with the temporary password.`
+                  : `${user.displayName} must sign in with the new temporary password.`,
+            })
+          }}
+        />
       )}
     </>
   )
@@ -245,11 +270,13 @@ function AccountFilters({
 }
 
 function AccountRow({
+  index,
   account,
   isYou,
   onEdit,
   onReset,
 }: {
+  index: number
   account: Account
   isYou: boolean
   onEdit: () => void
@@ -261,7 +288,10 @@ function AccountRow({
       ? { label: 'Temporary password', className: 'bg-warn-soft text-warn-ink' }
       : null
   return (
-    <li className="grid gap-x-6 gap-y-3 rounded-(--radius-panel) bg-surface px-5 py-4 md:grid-cols-[minmax(0,5fr)_minmax(0,4fr)_auto] md:items-center">
+    <li
+      className="arrive grid gap-x-6 gap-y-3 rounded-(--radius-panel) bg-surface px-5 py-4 transition-[background-color,box-shadow] duration-200 hover:shadow-[0_8px_24px_-16px_rgb(9_48_75/0.35)] md:grid-cols-[minmax(0,5fr)_minmax(0,4fr)_auto] md:items-center"
+      style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+    >
       <div className="min-w-0">
         <p className={`truncate text-[15px] font-semibold ${account.isActive ? 'text-ink' : 'text-ink-2'}`}>
           {account.displayName}

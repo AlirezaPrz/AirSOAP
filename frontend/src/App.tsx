@@ -10,7 +10,20 @@ import { DashboardScreen, type SimulatedFailure } from './screens/DashboardScree
 import { ProcessingScreen } from './screens/ProcessingScreen'
 import { RecordingScreen } from './screens/RecordingScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
+import type { WorkflowStatus } from './workflow/reducer'
 import { useEncounterWorkflow, type StartEncounterInput } from './workflow/useEncounterWorkflow'
+
+const STEP_GROUP: Record<WorkflowStatus, string> = {
+  idle: 'patient',
+  ready: 'record',
+  recording: 'record',
+  processing: 'process',
+  'processing-error': 'process',
+  review: 'review',
+  confirming: 'review',
+  submitting: 'review',
+  completed: 'done',
+}
 
 interface AppProps {
   /** Backend implementation; defaults to the mock, or the local backend with VITE_AIRSOAP_API=http. */
@@ -92,7 +105,10 @@ export default function App({ api: providedApi, account }: AppProps) {
 
   return (
     <AppShell status={state.status} encounter={'encounter' in state ? state.encounter : null} account={shellAccount}>
-      {screen}
+      {/* Each step of the encounter arrives; the review states share one screen, so they share one key. */}
+      <div key={STEP_GROUP[state.status]} className="arrive">
+        {screen}
+      </div>
       {confirmingSignOut && account && (
         <ConfirmDialog
           title="Sign out and discard this encounter?"

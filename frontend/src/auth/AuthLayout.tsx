@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import logo from '../assets/airsoap-logo.webp'
 import { Logo } from '../components/Logo'
+import { Showcase } from './Showcase'
 
 const FACTS: { title: string; body: string }[] = [
   {
@@ -34,21 +35,9 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
 
   return (
     <div className="min-h-dvh bg-ground text-ink lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      <aside className="hidden flex-col justify-between gap-12 bg-rail px-12 py-12 lg:flex">
-        <img src={logo} alt="AirSOAP" width={720} height={541} className="h-auto w-full max-w-[300px]" />
-        <div className="max-w-sm">
-          <p className="text-[22px] leading-snug font-semibold tracking-[-0.01em] text-balance text-brand-navy">
-            From the conversation to a reviewed SOAP note, on the device in the room.
-          </p>
-          <dl className="mt-8 space-y-5">
-            {FACTS.map((fact) => (
-              <div key={fact.title}>
-                <dt className="text-[15px] font-semibold text-ink">{fact.title}</dt>
-                <dd className="mt-0.5 text-[15px] text-ink-2">{fact.body}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
+      <aside className="sticky top-0 hidden h-dvh flex-col gap-8 bg-rail px-10 py-10 lg:flex xl:px-12">
+        <img src={logo} alt="AirSOAP" width={720} height={541} className="h-auto w-[150px] shrink-0" />
+        <Showcase />
       </aside>
 
       <header className="bg-rail px-5 py-4 sm:px-8 lg:hidden">
@@ -56,7 +45,8 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
       </header>
 
       <main className="flex items-start justify-center px-5 py-10 sm:px-8 lg:items-center lg:py-12">
-        <div className="w-full max-w-[420px]">
+        {/* key: each step of signing in arrives instead of swapping in place */}
+        <div key={title} className="arrive w-full max-w-[420px]">
           <h1
             ref={headingRef}
             tabIndex={-1}

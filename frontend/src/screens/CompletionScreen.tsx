@@ -27,6 +27,19 @@ export function CompletionScreen({ submission, onReturn }: CompletionScreenProps
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-(--radius-panel) bg-accent-soft p-6 text-accent-ink sm:p-10">
+          <svg viewBox="0 0 56 56" className="mb-6 size-14" aria-hidden>
+            <circle cx="28" cy="28" r="26" fill="var(--color-accent)" className="arrive" />
+            <path
+              d="m17 29 7.5 7.5L40 21"
+              fill="none"
+              stroke="#fff"
+              strokeWidth="4.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="draw"
+              style={{ ['--length' as string]: 36 }}
+            />
+          </svg>
           <p className="text-[24px] leading-snug font-semibold tracking-[-0.01em] text-balance sm:text-[28px]">
             No external EMR is connected. No medical record has been created or modified.
           </p>

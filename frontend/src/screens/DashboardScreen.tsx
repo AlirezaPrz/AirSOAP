@@ -23,6 +23,73 @@ const STEPS: { title: string; body: string }[] = [
   { title: 'Submit', body: 'Confirm the note. In this prototype nothing is sent to an EMR, and the encounter is cleared.' },
 ]
 
+/**
+ * "What the AI sees", live: as the clinician types, each detail moves to the side it goes to.
+ * The point is to show, with this patient's own details, that identity never reaches the model.
+ */
+function AiPreview({ values, age }: { values: PatientFormValues; age: number | null }) {
+  const visit = values.encounterType ? ENCOUNTER_TYPE_LABELS[values.encounterType as EncounterType] : null
+  const shared: { label: string; value: string | null; placeholder: string }[] = [
+    { label: 'Age', value: age === null ? null : `${toModelAge(age)} years`, placeholder: 'from the date of birth' },
+    { label: 'Visit type', value: visit, placeholder: 'once you choose one' },
+    { label: 'Transcript', value: null, placeholder: 'after recording, names removed' },
+  ]
+  const withheld: { label: string; value: string }[] = [
+    { label: 'Name', value: values.fullName.trim() },
+    { label: 'Date of birth', value: values.dateOfBirth },
+    { label: 'MRN', value: values.mrn.trim() },
+  ]
+
+  return (
+    <section aria-labelledby="ai-preview" className="rounded-(--radius-panel) bg-accent-soft p-6 text-accent-ink lg:row-span-2">
+      <h2 id="ai-preview" className="text-lg font-semibold">
+        What the AI sees
+      </h2>
+      <p className="mt-1 text-[15px]">
+        A local model drafts the note on this device. Fill in the form and watch where each detail goes.
+      </p>
+
+      <h3 className="mt-6 flex items-center gap-2 text-sm font-semibold">
+        <CheckIcon className="size-4" strokeWidth={2.5} /> Shared with the model
+      </h3>
+      <dl className="mt-2 divide-y divide-accent/15 rounded-(--radius-control) bg-surface/70 px-3.5">
+        {shared.map((row) => (
+          <div key={row.label} className="flex items-baseline justify-between gap-4 py-2.5 text-[15px]">
+            <dt>{row.label}</dt>
+            <dd
+              key={row.value ?? 'empty'}
+              className={row.value ? 'arrive font-semibold text-ink tabular-nums' : 'text-right text-sm text-accent-ink/75'}
+            >
+              {row.value ?? row.placeholder}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      <h3 className="mt-6 flex items-center gap-2 text-sm font-semibold">
+        <XIcon className="size-4" strokeWidth={2.5} /> Never leaves this screen
+      </h3>
+      <dl className="mt-2 divide-y divide-accent/15 rounded-(--radius-control) bg-surface/70 px-3.5">
+        {withheld.map((row) => (
+          <div key={row.label} className="flex items-baseline justify-between gap-4 py-2.5 text-[15px]">
+            <dt>{row.label}</dt>
+            <dd className="min-w-0 truncate text-right">
+              {row.value ? (
+                <span className="text-ink-2 line-through decoration-danger/70 decoration-2">{row.value}</span>
+              ) : (
+                <span className="text-sm text-accent-ink/75">not entered</span>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 text-sm">
+        If a name is spoken during the visit, it is removed from the transcript before the model sees it.
+      </p>
+    </section>
+  )
+}
+
 /** A short, collapsible walkthrough of one encounter, for first-time users. */
 function HowItWorks() {
   return (
@@ -243,30 +310,7 @@ export function DashboardScreen({ onStart, showDemoControls }: DashboardScreenPr
           </form>
         </Panel>
 
-        <section className="rounded-(--radius-panel) bg-accent-soft p-6 text-accent-ink lg:row-span-2">
-          <h2 className="text-lg font-semibold">What the AI sees</h2>
-          <p className="mt-1 text-[15px]">Notes are drafted on this device by a local model.</p>
-
-          <h3 className="mt-5 text-sm font-semibold">Shared with the model</h3>
-          <ul className="mt-2 space-y-2 text-[15px]">
-            {['The visit transcript, with identifiers removed', 'Age in years', 'Encounter type'].map((item) => (
-              <li key={item} className="flex gap-2.5">
-                <CheckIcon className="mt-1 size-4 shrink-0" strokeWidth={2.5} />
-                {item}
-              </li>
-            ))}
-          </ul>
-
-          <h3 className="mt-5 text-sm font-semibold">Never shared</h3>
-          <ul className="mt-2 space-y-2 text-[15px]">
-            {['Patient name', 'Date of birth', 'Medical record number'].map((item) => (
-              <li key={item} className="flex gap-2.5">
-                <XIcon className="mt-1 size-4 shrink-0" strokeWidth={2.5} />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <AiPreview values={values} age={age} />
 
         <HowItWorks />
 

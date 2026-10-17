@@ -12,7 +12,9 @@ import { useSessionKeepAlive } from './auth/useSessionKeepAlive'
 import { Button } from './components/Button'
 import { Spinner } from './components/icons'
 import type { AccountInfo } from './components/AccountSummary'
+import { Toaster } from './components/Toaster'
 import { Alert } from './components/ui'
+import { useToast } from './lib/toast'
 
 type AuthState =
   | { status: 'checking' }
@@ -29,7 +31,16 @@ interface RootProps {
  * change, role choice, the clinical workspace or the account screens. Nothing about the
  * session is stored in the browser; the HttpOnly cookie is the only credential.
  */
-export function Root({ services: provided }: RootProps) {
+export function Root(props: RootProps) {
+  return (
+    <Toaster>
+      <SessionRouter {...props} />
+    </Toaster>
+  )
+}
+
+function SessionRouter({ services: provided }: RootProps) {
+  const toast = useToast()
   const [services] = useState(() => provided ?? createDefaultServices())
   const { auth, api } = services
   const [state, setState] = useState<AuthState>({ status: 'checking' })
@@ -85,6 +96,7 @@ export function Root({ services: provided }: RootProps) {
   const signedIn = (next: Session) => {
     setGeneration((n) => n + 1)
     setState({ status: 'signed-in', session: next })
+    if (next.activeRole) toast({ text: `Signed in as ${next.user.displayName}.` })
   }
 
   const signOut = () => {
