@@ -71,6 +71,11 @@ describe('workflowReducer — happy path', () => {
     expect(state).toMatchObject({ stage: 'soap-generation', progress: 0, transcript })
   })
 
+  it('accepts unknown progress while the backend is working', () => {
+    const state = workflowReducer(run(toProcessing), { type: 'PROCESSING_PROGRESS', stage: 'transcription', progress: null })
+    expect(state).toMatchObject({ status: 'processing', progress: null })
+  })
+
   it('clamps progress and ignores progress for a different stage', () => {
     const state = run(toProcessing)
     expect(workflowReducer(state, { type: 'PROCESSING_PROGRESS', stage: 'transcription', progress: 4 })).toMatchObject({
