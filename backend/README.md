@@ -1,8 +1,10 @@
-# AirSOAP backend (Phase 3)
+# AirSOAP backend (Phases 3 and 4)
 
 A FastAPI service that records from the Raspberry Pi's USB microphone with `arecord` and transcribes the whole recording in one request to a loopback-only whisper.cpp `whisper-server` running the existing `ggml-small.en.bin` model. By default the backend starts whisper-server only while it is transcribing and stops it afterwards, so the model's CPU and RAM are free for whatever runs next (Phase 4's language model).
 
-On macOS it runs with a mock recorder and a mock transcriber, so you can develop and test without a microphone or Whisper. There is no SOAP generation, Ollama, speaker diarization or EMR integration in this phase.
+Phase 4 adds two tasks that run on the local Qwen 2.5 3B model through Ollama: **SOAP note generation** and an optional **Clinical Review**. Both share one Ollama client and run one at a time. There is no AI speaker labelling (the clinician labels speakers by hand), no audio diarization and no EMR integration.
+
+On macOS it runs with a mock recorder, mock transcriber and mock AI, so you can develop and test without a microphone, Whisper or Ollama.
 
 > This is a prototype. It makes no claim of regulatory compliance or production readiness.
 
@@ -38,6 +40,64 @@ whisper-server reports no progress during a request. So `progress` is `0` while 
 
 Errors use one shape: `{"error": {"code", "message", "retryable"}}`. Messages are fixed strings, with no paths, transcript text or patient details. IDs are random UUIDs. Interactive API docs are at `http://127.0.0.1:8000/docs` while the server runs.
 
+## AI tasks (Phase 4)
+
+Two separate tasks, each with its own prompt template, validated output schema and checks, sharing one Ollama client and the same model:
+
+| Task | Endpoint | Input | Output |
+| --- | --- | --- | --- |
+| SOAP generation | `POST /api/ai/soap` | Transcript segments with the speaker labels the clinician set, plus age and encounter type | `subjective`, `objective`, `assessment`, `plan`, plus warnings |
+| Clinical Review | `POST /api/ai/clinical-review` | The same labelled transcript **and the clinician's edited SOAP note**, plus age and encounter type | `informationGaps`, `followUpQuestions`, `differentialConsiderations`, `documentationInconsistencies` |
+
+Both return `202 {jobId, kind}` at once, because a 3B model on the Pi can take minutes. Poll `GET /api/ai/jobs/{jobId}` for `status` (`queued`, `processing`, `completed`, `error`, `cancelled`) and the result in `soapResult` or `reviewResult`. `POST /api/ai/jobs/{jobId}/cancel` stops a job (and aborts its request to Ollama). `DELETE /api/ai/jobs/{jobId}` cancels if needed and removes the result from backend memory; the frontend calls it as soon as it has the result.
+
+**Speaker labels.** Segments carry `clinician`, `patient` or `unknown`. Whisper does not identify speakers, so every segment starts as `unknown` and the clinician sets the labels in the review screen. Nothing guesses them. The labels the clinician chose are passed to both tasks, and `unknown` lines are never attributed to a person.
+
+**What the checks do**
+- **Output validation:** every answer must match a strict JSON schema (also given to Ollama as its output format). An unusable answer is retried once, then reported as `AI_INVALID_OUTPUT`. It is never shown as a result.
+- **SOAP grounding:** the prompt forbids inventing findings, treats a clinician's question as a question and not as a symptom, never assumes a negative, and asks for "Not documented" where the transcript is silent. On top of that, any number in the note that does not appear in the transcript (digits or spelled-out) comes back as a warning, so a made-up dose or vital is flagged to the clinician.
+- **Review evidence:** every suggestion must quote text that really appears in the transcript or the note. The server checks each quote, attaches the segment ID or note field, and drops any suggestion whose quote it cannot find (counted in `omittedUnverified`). A differential with no verified evidence is dropped, so an empty list is a normal result. Suggestions that tell the clinician to start, stop or change a treatment are dropped as well.
+- **Stable IDs:** a suggestion's ID comes from its category and wording, so rerunning the review after an edit keeps the same ID and a dismissed suggestion stays dismissed.
+- **The note is never changed by the backend.** Clinical Review only returns suggestions.
+
+**Limits.** Requests over 12,000 characters of transcript (16,000 with the note) or 128 KB are refused with a clear error, so the prompt always fits the model's context window.
+
+### One model in memory at a time
+
+A 4 GB Pi cannot hold whisper-server (about 650 MB) and Qwen (about 2 GB) together. A shared gate makes every transcription and every AI task take turns: before an AI task the backend stops whisper-server, and before a transcription it asks Ollama to unload Qwen. Ollama itself should also be limited to one model and one request (`deploy/ollama-override.conf`). `AIRSOAP_OLLAMA_KEEP_ALIVE` (default `5m`) lets a note and its review run back to back without reloading the model.
+
+### Set up Ollama on the Pi
+
+The Pi already has Ollama and the models (`ollama list` shows `qwen2.5:3b-instruct`). No download is needed.
+
+```bash
+# 1. One model, one request at a time, loopback only (needs sudo, once)
+sudo systemctl edit ollama        # paste the lines from deploy/ollama-override.conf
+sudo systemctl restart ollama
+ss -ltn | grep 11434              # must show 127.0.0.1:11434, never 0.0.0.0
+
+# 2. Add the "Local language model" block from deploy/airsoap.env.example to
+#    ~/.config/airsoap/airsoap.env, then restart the backend
+systemctl --user restart airsoap-backend.service
+
+# 3. Check it
+curl -s http://127.0.0.1:8000/api/health     # "ai":"ollama","aiReady":true
+python3 scripts/smoke_ai.py                   # runs SOAP then review on a fictional visit; prints timings
+python3 scripts/smoke_ai.py --show            # also prints the note and suggestions to this terminal
+```
+
+The smoke test sends only an invented transcript. Expect each task to take from tens of seconds to a few minutes on the Pi; measure it and raise `AIRSOAP_OLLAMA_TIMEOUT_SECONDS` if needed. The default model is the stock `qwen2.5:3b-instruct`. `airsoap-3b:latest` is also installed; look at it with `ollama show airsoap-3b --modelfile` before switching, since it may carry its own system prompt.
+
+### Privacy for the AI tasks
+
+- Requests contain no patient name, date of birth or MRN: the frontend removes them from the transcript and note before sending, and sends only age (`90+` for 90 and over) and encounter type as context. Job IDs are random.
+- Everything goes to `127.0.0.1:11434`; the backend refuses any other Ollama address and ignores proxy environment variables.
+- Logs hold only job IDs, task kinds, timings and token counts. A test checks that transcript text, note text and model output never appear in them. Error messages are fixed strings. Validation errors (HTTP 422) never echo the rejected input.
+- Task input is dropped from memory as soon as a job finishes. Results are kept for `AIRSOAP_JOB_TTL_SECONDS` (10 minutes) or until the frontend deletes the job, and they are never written to disk.
+- If a task fails, nothing is kept: the job holds only a safe error. When the backend shuts down, running jobs are cancelled, all jobs are discarded and Ollama is asked to unload the model.
+- Ollama's own logs are not touched by this app. Leave `OLLAMA_DEBUG` unset so it does not log request content.
+- Local processing alone does not make this system compliant or production ready.
+
 ## Configuration
 
 Everything is set with environment variables. On the Pi they live in `~/.config/airsoap/airsoap.env`; see [`deploy/airsoap.env.example`](deploy/airsoap.env.example).
@@ -59,6 +119,15 @@ Everything is set with environment variables. On the Pi they live in `~/.config/
 | `AIRSOAP_WHISPER_URL` | `http://127.0.0.1:8178` | Must be on this device. With `on-demand` it must be loopback with an explicit port |
 | `AIRSOAP_WHISPER_TIMEOUT_SECONDS` | `900` | How long one transcription may take |
 | `AIRSOAP_WHISPER_LANGUAGE` | `en` | Sent as `language` to whisper-server |
+| `AIRSOAP_AI` | `auto` | `auto` (mock on macOS, ollama on Linux), `mock` or `ollama` |
+| `AIRSOAP_OLLAMA_URL` | `http://127.0.0.1:11434` | Must be on this device |
+| `AIRSOAP_OLLAMA_MODEL` | `qwen2.5:3b-instruct` | The installed model tag |
+| `AIRSOAP_OLLAMA_TIMEOUT_SECONDS` | `600` | Per request to Ollama |
+| `AIRSOAP_OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps the model loaded after a task (`0` unloads at once) |
+| `AIRSOAP_OLLAMA_NUM_CTX` | `8192` | Prompt plus answer window, in tokens |
+| `AIRSOAP_AI_MAX_ATTEMPTS` | `2` | Tries per task when the answer is unusable |
+| `AIRSOAP_MAX_PENDING_AI_JOBS` | `2` | AI queue limit |
+| `AIRSOAP_MOCK_AI_SECONDS` | `1` | Simulated task time in mock mode |
 | `AIRSOAP_JOB_TTL_SECONDS` | `600` | How long a finished transcript stays in memory |
 | `AIRSOAP_MAX_PENDING_JOBS` | `4` | Queue limit |
 | `AIRSOAP_HOST` / `AIRSOAP_PORT` | `127.0.0.1` / `8000` | API bind address |
@@ -74,7 +143,7 @@ cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 
-.venv/bin/python -m pytest            # 83 tests; no microphone or Whisper needed
+.venv/bin/python -m pytest            # no microphone, Whisper or Ollama needed
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/python -m airsoap           # mock mode on 127.0.0.1:8000
 ```
@@ -223,4 +292,8 @@ Then open http://127.0.0.1:8000 on the Pi.
 | Start fails with "The microphone could not be opened." | Another program holds the device; check `arecord -l` and the device name in the env file. The backend log has arecord's error line |
 | "The recording contains no audio." | The recording was under 0.3 s, or the microphone produced no data |
 | `TRANSCRIPTION_TIMEOUT` | Increase `AIRSOAP_WHISPER_TIMEOUT_SECONDS`, or check the Pi's CPU load and temperature |
+| `aiReady: false` | `systemctl status ollama`; `ollama list` must show the model named in `AIRSOAP_OLLAMA_MODEL` |
+| `AI_TIMEOUT` | Increase `AIRSOAP_OLLAMA_TIMEOUT_SECONDS`; check CPU load, temperature and free RAM (`free -h`) |
+| `AI_MODEL_MISSING` | The tag in `AIRSOAP_OLLAMA_MODEL` is not installed; use one from `ollama list` |
+| `AI_INVALID_OUTPUT` | The model's answer failed validation twice. Try again; if it keeps happening, shorten the transcript |
 | Services stop when you log out | `loginctl show-user ai-innovate \| grep Linger` should say `yes` |
