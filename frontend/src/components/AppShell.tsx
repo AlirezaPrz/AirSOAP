@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { ENCOUNTER_TYPE_LABELS, formatDate } from '../lib/format'
 import { calculateAge } from '../workflow/privacy'
 import type { Encounter, WorkflowStatus } from '../workflow/reducer'
+import { AccountSummary, MobileSignOut, type AccountInfo } from './AccountSummary'
 import { CheckIcon } from './icons'
 
 const STEPS = ['Patient', 'Record', 'Process', 'Review', 'Done'] as const
@@ -18,7 +19,7 @@ const STEP_INDEX: Record<WorkflowStatus, number> = {
   completed: 4,
 }
 
-const PRIVACY_NOTE = 'Runs locally. No EMR connected. Nothing is saved to this device.'
+const PRIVACY_NOTE = 'Runs locally. No EMR connected. Encounters are never saved to this device.'
 
 function Wordmark() {
   return (
@@ -88,13 +89,23 @@ function PatientContext({ encounter }: { encounter: Encounter }) {
   )
 }
 
-function MobileBar({ current, encounter }: { current: number; encounter: Encounter | null }) {
+function MobileBar({
+  current,
+  encounter,
+  account,
+}: {
+  current: number
+  encounter: Encounter | null
+  account?: AccountInfo
+}) {
   const age = encounter ? calculateAge(encounter.patient.dateOfBirth) : null
   return (
     <header className="bg-rail px-5 pt-4 pb-4 lg:hidden">
-      <div className="flex items-baseline justify-between gap-4">
-        <p className="text-lg font-semibold tracking-[-0.01em]">AirSOAP</p>
-        <p className="text-sm text-ink-3">Demo, fictional data</p>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-lg font-semibold tracking-[-0.01em]">
+          AirSOAP <span className="text-sm font-normal text-ink-3">· fictional data</span>
+        </p>
+        {account && <MobileSignOut account={account} />}
       </div>
       <nav aria-label="Encounter progress" className="mt-4">
         <p className="text-sm text-ink-2">
@@ -120,10 +131,12 @@ function MobileBar({ current, encounter }: { current: number; encounter: Encount
 interface AppShellProps {
   status: WorkflowStatus
   encounter: Encounter | null
+  /** The signed-in clinician; absent in the stand-alone demo and in tests. */
+  account?: AccountInfo
   children: ReactNode
 }
 
-export function AppShell({ status, encounter, children }: AppShellProps) {
+export function AppShell({ status, encounter, account, children }: AppShellProps) {
   const current = STEP_INDEX[status]
   return (
     <div className="min-h-dvh bg-ground text-ink">
@@ -133,10 +146,13 @@ export function AppShell({ status, encounter, children }: AppShellProps) {
         </div>
         <StepList current={current} />
         {encounter && <PatientContext encounter={encounter} />}
-        <p className="mt-auto px-3 text-sm leading-relaxed text-ink-3">{PRIVACY_NOTE}</p>
+        <div className="mt-auto space-y-5">
+          {account && <AccountSummary account={account} />}
+          <p className="px-3 text-sm leading-relaxed text-ink-3">{PRIVACY_NOTE}</p>
+        </div>
       </aside>
 
-      <MobileBar current={current} encounter={encounter} />
+      <MobileBar current={current} encounter={encounter} account={account} />
 
       <main className="min-w-0 px-5 py-8 sm:px-8 lg:ml-[272px] lg:px-12 lg:py-12">
         <div className="mx-auto max-w-[1120px]">{children}</div>
