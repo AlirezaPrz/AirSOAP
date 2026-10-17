@@ -99,19 +99,73 @@ fi
 model="$(setting AIRSOAP_OLLAMA_MODEL)"
 ok "Ollama model: ${model:-qwen2.5:3b-instruct (default)}"
 
-# What the backend says about itself.
+# Sign-in and storage settings.
+perm() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+env_mode="$(perm "$ENV_FILE")"
+case "$env_mode" in
+  600|400) ok "env file is readable only by you ($env_mode)" ;;
+  *) fix "env file permissions are $env_mode; run: chmod 600 $ENV_FILE" ;;
+esac
+db="$(setting AIRSOAP_DATABASE_PATH)"
+if [ -z "$db" ]; then
+  fix "AIRSOAP_DATABASE_PATH is not set (set it to a path on the SD card, e.g. \$HOME/.local/state/airsoap/airsoap.db)"
+elif [ ! -f "$db" ]; then
+  fix "the account database does not exist yet: $db (it is created when the backend starts)"
+else
+  db_mode="$(perm "$db")"; dir_mode="$(perm "$(dirname "$db")")"
+  if [ "$db_mode" = 600 ] && [ "$dir_mode" = 700 ]; then
+    ok "account database: $db (600, folder 700)"
+  else
+    fix "account database permissions are $db_mode (folder $dir_mode); expected 600 and 700"
+  fi
+fi
+case "$(setting AIRSOAP_COOKIE_SECURE)" in
+  true|True|1|"") ok "session cookie is HTTPS-only" ;;
+  *) fix "AIRSOAP_COOKIE_SECURE is not true; the session cookie could be sent without HTTPS" ;;
+esac
+origins="$(setting AIRSOAP_ALLOWED_ORIGINS)"
+case "$origins" in
+  "") ok "allowed origin: https://raspberrypi.local (default)" ;;
+  *http://*) fix "AIRSOAP_ALLOWED_ORIGINS contains a plain-HTTP origin: $origins" ;;
+  *) ok "allowed origins: $origins" ;;
+esac
+case "$(setting AIRSOAP_HOST)" in
+  ""|127.0.0.1|localhost|::1) ok "backend listens on loopback only (Caddy is the only way in)" ;;
+  *) fix "AIRSOAP_HOST is $(setting AIRSOAP_HOST); set it to 127.0.0.1 and let Caddy serve HTTPS" ;;
+esac
+
+# What is reachable.
 if [ -z "${AIRSOAP_CHECK_ENVIRON_FILE:-}" ] && command -v curl > /dev/null; then
   health="$(curl -s -m 5 "$API/api/health" || true)"
-  if [ -z "$health" ]; then
-    fix "no answer from $API/api/health"
+  case "$health" in
+    *'"status":"ok"'*) ok "backend answers on $API" ;;
+    *) fix "no answer from $API/api/health" ;;
+  esac
+  if curl -s -m 5 http://127.0.0.1:11434/api/tags > /dev/null; then
+    ok "Ollama answers on 127.0.0.1:11434"
   else
-    echo "  health: $health"
-    case "$lifecycle:$health" in
-      on-demand:*'"transcriber":"whisper-server (on demand)"'*'"transcriberReachable":true'*) ok "whisper-server is ready to start on demand" ;;
-      on-demand:*) fix "health does not show 'whisper-server (on demand)' with transcriberReachable true" ;;
-    esac
-    case "$health" in *'"aiReady":true'*) ok "Ollama is ready" ;; *) fix "aiReady is not true: systemctl status ollama; ollama list" ;; esac
+    fix "Ollama does not answer on 127.0.0.1:11434: systemctl status ollama"
   fi
+  if command -v ss > /dev/null; then
+    exposed="$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ':(8000|8178|11434)$' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)"
+    if [ -z "$exposed" ]; then
+      ok "backend, whisper-server and Ollama ports are bound to loopback only"
+    else
+      fix "listening beyond loopback: $(echo "$exposed" | tr '\n' ' ')"
+    fi
+  fi
+  if systemctl is-active --quiet caddy 2>/dev/null; then
+    ok "Caddy is running"
+    # -k only for this liveness probe: the point is that Caddy forwards to the backend.
+    https_health="$(curl -sk -m 5 https://raspberrypi.local/api/health || true)"
+    case "$https_health" in
+      *'"status":"ok"'*) ok "https://raspberrypi.local reaches the backend" ;;
+      *) fix "https://raspberrypi.local/api/health did not answer; check /etc/caddy/Caddyfile and: sudo systemctl status caddy" ;;
+    esac
+  else
+    fix "Caddy is not running: sudo systemctl status caddy"
+  fi
+  echo "  For the detailed status (microphone, whisper, model), sign in and run: .venv/bin/python scripts/smoke_test.py --status"
 fi
 
 echo
