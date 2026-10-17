@@ -121,6 +121,11 @@ class Audio:
 
     @classmethod
     def load(cls, path: Path) -> "Audio":
+        if not path.is_file():
+            sys.exit(
+                f"No audio file at {path}. Make it on the Mac with scripts/make_bench_audio.py and copy it here "
+                "with scp (see the backend README, Live transcription benchmark)."
+            )
         with wave.open(str(path), "rb") as source:
             if source.getframerate() != RATE or source.getnchannels() != 1 or source.getsampwidth() != 2:
                 sys.exit("The audio must be 16 kHz, mono, 16-bit WAV (make_bench_audio.py produces this).")
