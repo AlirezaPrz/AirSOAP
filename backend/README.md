@@ -462,6 +462,22 @@ cd frontend && VITE_AIRSOAP_API=http npm run dev
 Open http://localhost:5173 in Chrome or Firefox (they accept the HTTPS-only cookie on `localhost`; Safari does not). If port 8000 is busy on the Mac, use `-L 8001:127.0.0.1:8000` and start Vite with `AIRSOAP_BACKEND_URL=http://127.0.0.1:8001`.
 
 
+## Live transcription benchmark (Phase 6, stage 0)
+
+Before live transcription is built, `scripts/bench_live.py` measures on the Pi whether it can keep up. It uses a fictional consultation with two synthetic voices, so it can score accuracy and speaker roles against the known script. It starts its own whisper-server on port 8179 with your model from the env file, and uses Ollama's `qwen2.5:1.5b-instruct`. Nothing goes off the device, and no transcript text is printed or saved.
+
+```bash
+# On the Mac: make the test audio (macOS voices) and copy it to the Pi
+python3 backend/scripts/make_bench_audio.py ~/Desktop/bench-consultation.wav
+scp ~/Desktop/bench-consultation.wav ai-innovate@raspberrypi.local:
+
+# On the Pi, while nobody is using AirSOAP (about 15 minutes; --quick takes about 5)
+cd ~/AirSOAP/backend
+python3 scripts/bench_live.py --audio ~/bench-consultation.wav
+```
+
+It reports Whisper load time, request time per window size (with full and reduced audio context), a real-time live simulation (how soon text is confirmed after speech, how far behind it falls), the final whole-file pass, speaker-label speed and accuracy, model switching time, and the live simulation again with labelling running alongside. It samples free memory, CPU, temperature and throttling throughout, prints recommendations, and saves the numbers to `~/airsoap-bench/bench-<time>.json`.
+
 ## Privacy and cleanup
 
 - **Accounts, not patients.** The SQLite database holds accounts, password and session hashes and the audit trail. Introducing it did not change what happens to clinical content: none of it is written there or anywhere else.
