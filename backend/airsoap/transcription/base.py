@@ -44,6 +44,10 @@ class Transcriber(Protocol):
         """The model is in memory right now."""
         ...
 
+    async def release(self) -> None:
+        """Free the model's memory now (stops a managed whisper-server). Safe when idle."""
+        ...
+
     async def close(self) -> None:
-        """Release anything held, e.g. stop a managed whisper-server."""
+        """Release anything held at shutdown."""
         ...

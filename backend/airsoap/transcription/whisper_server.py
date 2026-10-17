@@ -96,5 +96,9 @@ class WhisperServerTranscriber:
         # Result of the latest reachability check; an always-on server keeps its model loaded.
         return self._loaded
 
+    async def release(self) -> None:
+        # An externally managed whisper-server is not ours to stop.
+        return None
+
     async def close(self) -> None:
         return None

@@ -7,6 +7,7 @@ cancelled. Finished jobs (and their transcripts) are dropped from memory after
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -14,12 +15,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
 from .errors import ApiError
 from .storage import WorkDir
 from .transcription import Transcriber, TranscriptionError, TranscriptResult
 
 logger = logging.getLogger(__name__)
+
+
+class AbstractAsyncContextProvider(Protocol):
+    """Anything with ``for_transcription()`` (the ModelGate); kept abstract to avoid an import cycle."""
+
+    def for_transcription(self) -> contextlib.AbstractAsyncContextManager[None]: ...
 
 
 class JobStatus(StrEnum):
@@ -74,7 +82,9 @@ class JobManager:
         ttl_seconds: float,
         max_pending: int,
         clock: Callable[[], float] = time.monotonic,
+        gate: AbstractAsyncContextProvider | None = None,
     ) -> None:
+        self._gate = gate
         self._transcriber = transcriber
         self._storage = storage
         self._ttl = ttl_seconds
@@ -158,7 +168,9 @@ class JobManager:
     async def _process(self, job: Job) -> None:
         started = self._clock()
         try:
-            result = await self._transcriber.transcribe(job.audio_path, job.audio_duration_ms)
+            # Only one heavy job runs at a time, and Qwen is unloaded before whisper-server starts.
+            async with self._gate.for_transcription() if self._gate else contextlib.nullcontext():
+                result = await self._transcriber.transcribe(job.audio_path, job.audio_duration_ms)
         except asyncio.CancelledError:
             self._finish(job, JobStatus.CANCELLED)
             logger.info("job=%s cancelled", job.id)
