@@ -46,11 +46,12 @@ def main() -> None:
     health = call(base, "GET", "/api/health")
     print(
         f"health: recorder={health['recorder']} (available={health['recorderAvailable']}) "
-        f"transcriber={health['transcriber']} (reachable={health['transcriberReachable']}) "
+        f"transcriber={health['transcriber']} (ready={health['transcriberReachable']}, "
+        f"model loaded={health['transcriberLoaded']}) "
         f"state={health['recording']}"
     )
     if not health["transcriberReachable"]:
-        sys.exit("The transcriber is not reachable; start whisper-server first.")
+        sys.exit("The transcriber is not ready: check the whisper-server path and model in the env file.")
 
     started = call(base, "POST", "/api/recording/start")
     print(f"recording for {args.seconds:.1f} s; speak now...")

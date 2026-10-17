@@ -1,3 +1,6 @@
+# OPTIONAL. Only for the always-on mode (AIRSOAP_WHISPER_LIFECYCLE=external). It keeps the
+# model in RAM all the time. With the default on-demand mode, do not enable this unit:
+# the backend starts whisper-server itself and would find the port taken.
 [Unit]
 Description=whisper.cpp server for AirSOAP (small.en, loopback only)
 After=network.target
