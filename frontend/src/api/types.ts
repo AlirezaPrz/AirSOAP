@@ -7,8 +7,11 @@
 /** ISO-8601 timestamp, e.g. "2026-10-17T14:03:00.000Z". */
 export type IsoDateTime = string
 
-/** Whisper does not identify speakers, so real transcripts start as `unassigned`. */
-export type Speaker = 'clinician' | 'patient' | 'unassigned'
+/**
+ * Whisper does not identify speakers, so every segment starts as `unknown` and the
+ * clinician sets the labels by hand. Nothing guesses them.
+ */
+export type Speaker = 'clinician' | 'patient' | 'unknown'
 
 export interface TranscriptSegment {
   id: string
@@ -122,23 +125,101 @@ export interface SoapGenerationContext {
   encounterType: EncounterType
 }
 
+/** A transcript segment as the language model sees it: ID, the clinician's label, redacted text. */
+export interface AiSegment {
+  id: string
+  speaker: Speaker
+  text: string
+}
+
 /**
- * Everything the language model receives. Deliberately has no name, date of
- * birth or MRN fields. Build it only with `buildSoapRequest()`, which also
- * redacts identifiers from the transcript text.
+ * Everything the SOAP model receives. Deliberately has no name, date of birth or
+ * MRN fields. Build it only with `buildSoapRequest()`, which also redacts
+ * identifiers from the transcript text.
  */
 export interface SoapGenerationRequest {
-  transcript: Transcript
+  segments: AiSegment[]
   context: SoapGenerationContext
+}
+
+/** A value in the generated note that the transcript never mentions. */
+export interface SoapWarning {
+  field: SoapField
+  message: string
 }
 
 export interface SoapGenerationResponse {
   soap: SoapNote
+  warnings: SoapWarning[]
   model: string
   generatedAt: IsoDateTime
 }
 
-export type ProcessingStage = 'transcription' | 'soap-generation'
+// ---------------------------------------------------------------------------
+// Clinical review (optional, run on demand after the clinician edits the note)
+// ---------------------------------------------------------------------------
+
+/** The labelled transcript and the clinician's current note, both with identifiers removed. */
+export interface ClinicalReviewRequest {
+  segments: AiSegment[]
+  soap: SoapNote
+  context: SoapGenerationContext
+}
+
+export type SuggestionCategory =
+  | 'information_gap'
+  | 'follow_up_question'
+  | 'differential_consideration'
+  | 'documentation_inconsistency'
+
+export type Uncertainty = 'low' | 'medium' | 'high'
+
+/** Text quoted from the transcript or the note; the backend verified that it exists there. */
+export interface Evidence {
+  source: 'transcript' | 'note'
+  quote: string
+  segmentId?: string | null
+  field?: SoapField | null
+}
+
+export interface ReviewSuggestion {
+  /** Stable across reruns, so a dismissed suggestion stays dismissed. */
+  id: string
+  category: SuggestionCategory
+  description: string
+  rationale: string
+  uncertainty: Uncertainty
+  evidence: Evidence[]
+  gapType?: 'not_asked' | 'asked_not_answered' | 'omitted_from_note' | 'uncertain' | null
+  missingInformation?: string | null
+}
+
+export interface ClinicalReview {
+  informationGaps: ReviewSuggestion[]
+  followUpQuestions: ReviewSuggestion[]
+  differentialConsiderations: ReviewSuggestion[]
+  documentationInconsistencies: ReviewSuggestion[]
+  /** Suggestions left out because their quoted evidence could not be found. */
+  omittedUnverified: number
+}
+
+export interface ClinicalReviewResponse {
+  review: ClinicalReview
+  model: string
+  generatedAt: IsoDateTime
+}
+
+/** `GET /api/ai/jobs/{jobId}`: the backend's wire format for both AI tasks. */
+export interface AiJobResponse {
+  jobId: string
+  kind: 'soap' | 'clinical-review'
+  status: TranscriptionJobStatus
+  soapResult: { soap: SoapNote; warnings: SoapWarning[] } | null
+  reviewResult: ClinicalReview | null
+  error: ApiError | null
+}
+
+export type ProcessingStage = 'transcription'
 
 /** Progress event streamed by long-running jobs (e.g. over SSE). */
 export interface ProgressUpdate {
@@ -189,6 +270,15 @@ export type ApiErrorCode =
   | 'JOB_NOT_FOUND'
   | 'TRANSCRIBER_UNAVAILABLE'
   | 'TRANSCRIPTION_TIMEOUT'
+  | 'CLINICAL_REVIEW_FAILED'
+  | 'AI_UNAVAILABLE'
+  | 'AI_TIMEOUT'
+  | 'AI_FAILED'
+  | 'AI_INVALID_OUTPUT'
+  | 'AI_MODEL_MISSING'
+  | 'AI_QUEUE_FULL'
+  | 'REQUEST_TOO_LARGE'
+  | 'INVALID_REQUEST'
 
 export interface ApiError {
   code: ApiErrorCode

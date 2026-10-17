@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Transcript } from '../api/types'
 import { createMockTranscript } from '../mocks/encounter'
-import { REDACTED, buildSoapRequest, calculateAge, redactIdentifiers, toModelAge } from './privacy'
+import { REDACTED, buildClinicalReviewRequest, buildSoapRequest, calculateAge, redactIdentifiers, toModelAge } from './privacy'
 import type { Encounter } from './reducer'
 import { validatePatientForm } from './validation'
 
@@ -67,22 +67,72 @@ describe('buildSoapRequest', () => {
     const serialized = JSON.stringify(request)
 
     expect(request.context).toEqual({ patientAge: 35, encounterType: 'acute' })
-    expect(Object.keys(request).sort()).toEqual(['context', 'transcript'])
+    expect(Object.keys(request).sort()).toEqual(['context', 'segments'])
     expect(serialized).not.toMatch(/jordan|testpatient/i)
     expect(serialized).not.toContain('1991')
     expect(serialized).not.toContain('DEMO-000123')
   })
 
-  it('keeps speaker labels and timing', () => {
-    const transcript = createMockTranscript()
-    const request = buildSoapRequest(encounter, transcript, today)
-    expect(request.transcript.segments.map((s) => s.speaker)).toEqual(transcript.segments.map((s) => s.speaker))
-    expect(request.transcript.durationMs).toBe(transcript.durationMs)
+  it('passes the speaker labels the clinician set, and only id, label and text', () => {
+    const base = createMockTranscript()
+    const labelled: Transcript = {
+      ...base,
+      segments: base.segments.map((segment, index) => ({
+        ...segment,
+        speaker: index % 2 === 0 ? 'clinician' : index === 1 ? 'patient' : 'unknown',
+      })),
+    }
+    const request = buildSoapRequest(encounter, labelled, today)
+    expect(request.segments.map((s) => s.speaker)).toEqual(labelled.segments.map((s) => s.speaker))
+    expect(request.segments.map((s) => s.id)).toEqual(labelled.segments.map((s) => s.id))
+    expect(Object.keys(request.segments[0]).sort()).toEqual(['id', 'speaker', 'text']) // no timestamps either
   })
 
   it('sends 90+ for elderly patients', () => {
     const elderly = { ...encounter, patient: { ...encounter.patient, dateOfBirth: '1930-01-01' } }
     expect(buildSoapRequest(elderly, createMockTranscript(), today).context.patientAge).toBe('90+')
+  })
+})
+
+describe('buildClinicalReviewRequest', () => {
+  const encounter: Encounter = {
+    id: 'enc-1',
+    patient: { fullName: 'Jordan Testpatient', dateOfBirth: '1991-04-12', mrn: 'DEMO-000123' },
+    encounterType: 'acute',
+  }
+  const note = {
+    subjective: 'Jordan Testpatient reports a sore throat.',
+    objective: 'Temp 38.3.',
+    assessment: 'Pharyngitis. DOB 04/12/1991.',
+    plan: 'Fluids. MRN DEMO-000123.',
+  }
+
+  it('sends the labelled transcript and the clinician’s edited note, without identifiers', () => {
+    const base = createMockTranscript()
+    const transcript: Transcript = {
+      ...base,
+      segments: [
+        { id: 's1', speaker: 'clinician', startMs: 0, endMs: 1, text: 'Hello Jordan Testpatient.' },
+        { id: 's2', speaker: 'patient', startMs: 1, endMs: 2, text: 'Hi, born 04/12/1991.' },
+      ],
+    }
+    const request = buildClinicalReviewRequest(encounter, transcript, note, today)
+    expect(request.segments.map((s) => s.speaker)).toEqual(['clinician', 'patient'])
+    expect(request.context).toEqual({ patientAge: 35, encounterType: 'acute' })
+    expect(request.soap.objective).toBe('Temp 38.3.') // the clinician's wording is kept
+    expect(request.soap.subjective).toContain('reports a sore throat')
+    const serialized = JSON.stringify(request)
+    expect(serialized).not.toMatch(/jordan|testpatient/i)
+    expect(serialized).not.toContain('1991')
+    expect(serialized).not.toContain('DEMO-000123')
+  })
+
+  it('reflects later edits to the note and labels', () => {
+    const transcript = createMockTranscript()
+    const first = buildClinicalReviewRequest(encounter, transcript, note, today)
+    const second = buildClinicalReviewRequest(encounter, transcript, { ...note, plan: 'Fluids and rest.' }, today)
+    expect(first.soap.plan).not.toBe(second.soap.plan)
+    expect(second.soap.plan).toBe('Fluids and rest.')
   })
 })
 

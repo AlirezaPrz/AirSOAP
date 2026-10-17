@@ -43,5 +43,8 @@ class MockTranscriber:
     def is_loaded(self) -> bool:
         return False
 
+    async def release(self) -> None:
+        return None
+
     async def close(self) -> None:
         return None

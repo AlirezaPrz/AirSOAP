@@ -1,5 +1,7 @@
 import type {
   ApiError,
+  ClinicalReviewRequest,
+  ClinicalReviewResponse,
   ApiErrorCode,
   DemoSubmitRequest,
   DemoSubmitResponse,
@@ -29,7 +31,10 @@ export interface AirSoapApi {
   stopRecording(request: StopRecordingRequest, options?: RequestOptions): Promise<StopRecordingResponse>
   discardRecording(request: DiscardRecordingRequest, options?: RequestOptions): Promise<void>
   transcribe(request: TranscriptionRequest, options?: JobOptions): Promise<TranscriptionResponse>
-  generateSoap(request: SoapGenerationRequest, options?: JobOptions): Promise<SoapGenerationResponse>
+  /** Drafts a SOAP note from the labelled transcript. Never saves or submits anything. */
+  generateSoap(request: SoapGenerationRequest, options?: RequestOptions): Promise<SoapGenerationResponse>
+  /** Suggestions on the clinician's edited note. Never changes the note. */
+  runClinicalReview(request: ClinicalReviewRequest, options?: RequestOptions): Promise<ClinicalReviewResponse>
   submitDemo(request: DemoSubmitRequest, options?: RequestOptions): Promise<DemoSubmitResponse>
 }
 

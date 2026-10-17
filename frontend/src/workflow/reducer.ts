@@ -1,10 +1,12 @@
 import type {
+  ClinicalReview,
   DemoSubmitResponse,
   EncounterType,
   PatientIdentity,
   ProcessingStage,
   SoapField,
   SoapNote,
+  SoapWarning,
   Transcript,
   TranscriptSegment,
 } from '../api/types'
@@ -15,9 +17,32 @@ export interface Encounter {
   encounterType: EncounterType
 }
 
+export type SoapGenerationState =
+  | { status: 'idle' }
+  /** `touched` records the fields the clinician typed in while the AI was working; those are kept. */
+  | { status: 'running'; requestId: number; touched: Record<SoapField, boolean> }
+  | { status: 'failed'; message: string; retryable: boolean }
+
+export interface ClinicalReviewState {
+  status: 'idle' | 'running' | 'ready' | 'failed'
+  /** The latest request; answers carrying any other ID are ignored. */
+  requestId: number
+  message: string | null
+  /** The last good result, kept while a rerun is running or has failed. */
+  result: { review: ClinicalReview; basedOnVersion: number } | null
+  /** Suggestion IDs the clinician dismissed. IDs are stable across reruns, so they stay dismissed. */
+  dismissed: string[]
+}
+
 export interface Draft {
   transcript: Transcript
   soap: SoapNote
+  /** Values in the generated note that the transcript never mentions. */
+  warnings: SoapWarning[]
+  soapGeneration: SoapGenerationState
+  review: ClinicalReviewState
+  /** Counts every clinician edit to the transcript or note; tells whether a review is out of date. */
+  version: number
 }
 
 export interface ProcessingError {
@@ -38,15 +63,12 @@ export type WorkflowState =
       /** 0–1, or null while the backend cannot report progress. */
       progress: number | null
       attempt: number
-      /** Kept once transcription succeeds so a retry resumes at SOAP generation. */
-      transcript: Transcript | null
     }
   | {
       status: 'processing-error'
       encounter: Encounter
       recordingId: string
       attempt: number
-      transcript: Transcript | null
       error: ProcessingError
     }
   | { status: 'review'; encounter: Encounter; recordingId: string; draft: Draft }
@@ -64,11 +86,19 @@ export type WorkflowAction =
   | { type: 'RECORDING_STOPPED'; recordingId: string }
   | { type: 'PROCESSING_PROGRESS'; stage: ProcessingStage; progress: number | null }
   | { type: 'TRANSCRIPT_READY'; transcript: Transcript }
-  | { type: 'SOAP_READY'; soap: SoapNote }
   | { type: 'PROCESSING_FAILED'; error: ProcessingError }
   | { type: 'RETRY_PROCESSING' }
   | { type: 'EDIT_TRANSCRIPT_SEGMENT'; segmentId: string; changes: Partial<Pick<TranscriptSegment, 'text' | 'speaker'>> }
   | { type: 'EDIT_SOAP_FIELD'; field: SoapField; value: string }
+  | { type: 'SOAP_REQUESTED'; requestId: number }
+  | { type: 'SOAP_SUCCEEDED'; requestId: number; soap: SoapNote; warnings: SoapWarning[] }
+  | { type: 'SOAP_FAILED'; requestId: number; message: string; retryable: boolean }
+  | { type: 'SOAP_CANCELLED' }
+  | { type: 'REVIEW_REQUESTED'; requestId: number }
+  | { type: 'REVIEW_SUCCEEDED'; requestId: number; review: ClinicalReview; basedOnVersion: number }
+  | { type: 'REVIEW_FAILED'; requestId: number; message: string }
+  | { type: 'REVIEW_CANCELLED' }
+  | { type: 'REVIEW_DISMISSED'; suggestionId: string }
   | { type: 'REQUEST_SUBMIT' }
   | { type: 'CANCEL_SUBMIT' }
   | { type: 'CONFIRM_SUBMIT' }
@@ -98,15 +128,48 @@ export function missingSoapFields(soap: SoapNote): SoapField[] {
   return SOAP_FIELDS.filter((field) => soap[field].trim() === '')
 }
 
+/** True when at least one SOAP section has text. */
+export function hasSoapContent(soap: SoapNote): boolean {
+  return missingSoapFields(soap).length < SOAP_FIELDS.length
+}
+
 export function getRecordingId(state: WorkflowState): string | null {
   return 'recordingId' in state ? state.recordingId : null
 }
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 
+const NOT_TOUCHED: Record<SoapField, boolean> = { subjective: false, objective: false, assessment: false, plan: false }
+
+function newDraft(transcript: Transcript): Draft {
+  return {
+    transcript,
+    soap: { subjective: '', objective: '', assessment: '', plan: '' },
+    warnings: [],
+    soapGeneration: { status: 'idle' },
+    review: { status: 'idle', requestId: 0, message: null, result: null, dismissed: [] },
+    version: 0,
+  }
+}
+
+/** After a review stops without an answer, fall back to showing the last result, if any. */
+function settledReview(review: ClinicalReviewState): ClinicalReviewState {
+  return { ...review, status: review.result ? 'ready' : 'idle', message: null }
+}
+
+function inReview(state: WorkflowState): state is StateOf<'review'> {
+  return state.status === 'review'
+}
+
+function withDraft(state: StateOf<'review'>, changes: Partial<Draft>): StateOf<'review'> {
+  return { ...state, draft: { ...state.draft, ...changes } }
+}
+
 /**
  * Pure state machine for one encounter. Actions that are not valid in the
- * current state return the state unchanged.
+ * current state return the state unchanged. AI answers carry the ID of the
+ * request that produced them and are ignored unless it is still the current one,
+ * so a delayed result can never overwrite newer clinician edits.
  */
 export function workflowReducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
   switch (action.type) {
@@ -131,7 +194,6 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
         stage: 'transcription',
         progress: 0,
         attempt: 1,
-        transcript: null,
       }
 
     case 'PROCESSING_PROGRESS':
@@ -139,16 +201,12 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
       return { ...state, progress: action.progress === null ? null : clamp01(action.progress) }
 
     case 'TRANSCRIPT_READY':
-      if (state.status !== 'processing' || state.stage !== 'transcription') return state
-      return { ...state, transcript: action.transcript, stage: 'soap-generation', progress: 0 }
-
-    case 'SOAP_READY':
-      if (state.status !== 'processing' || state.stage !== 'soap-generation' || !state.transcript) return state
+      if (state.status !== 'processing') return state
       return {
         status: 'review',
         encounter: state.encounter,
         recordingId: state.recordingId,
-        draft: { transcript: state.transcript, soap: action.soap },
+        draft: newDraft(action.transcript),
       }
 
     case 'PROCESSING_FAILED':
@@ -158,7 +216,6 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
         encounter: state.encounter,
         recordingId: state.recordingId,
         attempt: state.attempt,
-        transcript: state.transcript,
         error: action.error,
       }
 
@@ -168,27 +225,129 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
         status: 'processing',
         encounter: state.encounter,
         recordingId: state.recordingId,
-        stage: state.transcript ? 'soap-generation' : 'transcription',
+        stage: 'transcription',
         progress: 0,
         attempt: state.attempt + 1,
-        transcript: state.transcript,
       }
 
     case 'EDIT_TRANSCRIPT_SEGMENT': {
-      if (state.status !== 'review') return state
+      if (!inReview(state)) return state
       const segments = state.draft.transcript.segments.map((segment) =>
         segment.id === action.segmentId ? { ...segment, ...action.changes } : segment,
       )
-      return { ...state, draft: { ...state.draft, transcript: { ...state.draft.transcript, segments } } }
+      return withDraft(state, {
+        transcript: { ...state.draft.transcript, segments },
+        version: state.draft.version + 1,
+      })
     }
 
-    case 'EDIT_SOAP_FIELD':
-      if (state.status !== 'review') return state
-      return { ...state, draft: { ...state.draft, soap: { ...state.draft.soap, [action.field]: action.value } } }
+    case 'EDIT_SOAP_FIELD': {
+      if (!inReview(state)) return state
+      const { soapGeneration } = state.draft
+      return withDraft(state, {
+        soap: { ...state.draft.soap, [action.field]: action.value },
+        // The clinician has taken over this section: a warning about the AI's text no longer applies,
+        // and an AI answer still on its way must not replace what they typed.
+        warnings: state.draft.warnings.filter((warning) => warning.field !== action.field),
+        soapGeneration:
+          soapGeneration.status === 'running'
+            ? { ...soapGeneration, touched: { ...soapGeneration.touched, [action.field]: true } }
+            : soapGeneration,
+        version: state.draft.version + 1,
+      })
+    }
 
-    case 'REQUEST_SUBMIT':
-      if (state.status !== 'review' || missingSoapFields(state.draft.soap).length > 0) return state
-      return { ...state, status: 'confirming', submitError: null }
+    case 'SOAP_REQUESTED':
+      if (!inReview(state) || state.draft.soapGeneration.status === 'running') return state
+      return withDraft(state, {
+        warnings: [],
+        soapGeneration: { status: 'running', requestId: action.requestId, touched: { ...NOT_TOUCHED } },
+      })
+
+    case 'SOAP_SUCCEEDED': {
+      if (!inReview(state)) return state
+      const { soapGeneration } = state.draft
+      if (soapGeneration.status !== 'running' || soapGeneration.requestId !== action.requestId) return state
+      const soap = { ...state.draft.soap }
+      let applied = false
+      for (const field of SOAP_FIELDS) {
+        if (!soapGeneration.touched[field]) {
+          soap[field] = action.soap[field]
+          applied = true
+        }
+      }
+      return withDraft(state, {
+        soap,
+        // Only warn about text the AI actually wrote; sections the clinician edited are theirs.
+        warnings: action.warnings.filter((warning) => !soapGeneration.touched[warning.field]),
+        soapGeneration: { status: 'idle' },
+        version: applied ? state.draft.version + 1 : state.draft.version,
+      })
+    }
+
+    case 'SOAP_FAILED': {
+      if (!inReview(state)) return state
+      const { soapGeneration } = state.draft
+      if (soapGeneration.status !== 'running' || soapGeneration.requestId !== action.requestId) return state
+      return withDraft(state, {
+        soapGeneration: { status: 'failed', message: action.message, retryable: action.retryable },
+      })
+    }
+
+    case 'SOAP_CANCELLED':
+      if (!inReview(state) || state.draft.soapGeneration.status !== 'running') return state
+      return withDraft(state, { soapGeneration: { status: 'idle' } })
+
+    case 'REVIEW_REQUESTED':
+      if (!inReview(state) || state.draft.review.status === 'running') return state
+      return withDraft(state, {
+        review: { ...state.draft.review, status: 'running', requestId: action.requestId, message: null },
+      })
+
+    case 'REVIEW_SUCCEEDED': {
+      if (!inReview(state)) return state
+      const { review } = state.draft
+      if (review.status !== 'running' || review.requestId !== action.requestId) return state
+      return withDraft(state, {
+        review: {
+          ...review,
+          status: 'ready',
+          message: null,
+          result: { review: action.review, basedOnVersion: action.basedOnVersion },
+        },
+      })
+    }
+
+    case 'REVIEW_FAILED': {
+      if (!inReview(state)) return state
+      const { review } = state.draft
+      if (review.status !== 'running' || review.requestId !== action.requestId) return state
+      return withDraft(state, { review: { ...review, status: 'failed', message: action.message } })
+    }
+
+    case 'REVIEW_CANCELLED':
+      if (!inReview(state) || state.draft.review.status !== 'running') return state
+      return withDraft(state, { review: settledReview(state.draft.review) })
+
+    case 'REVIEW_DISMISSED': {
+      if (!inReview(state) || state.draft.review.dismissed.includes(action.suggestionId)) return state
+      return withDraft(state, {
+        review: { ...state.draft.review, dismissed: [...state.draft.review.dismissed, action.suggestionId] },
+      })
+    }
+
+    case 'REQUEST_SUBMIT': {
+      if (
+        !inReview(state) ||
+        state.draft.soapGeneration.status === 'running' ||
+        missingSoapFields(state.draft.soap).length > 0
+      ) {
+        return state
+      }
+      // A review still running is abandoned: its answer would arrive after the note was submitted.
+      const review = state.draft.review.status === 'running' ? settledReview(state.draft.review) : state.draft.review
+      return { ...state, status: 'confirming', draft: { ...state.draft, review }, submitError: null }
+    }
 
     case 'CANCEL_SUBMIT':
       if (state.status !== 'confirming') return state

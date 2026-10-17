@@ -28,6 +28,8 @@ async def health(services: ServicesDep) -> HealthResponse:
         transcriber=services.transcriber.name,
         transcriber_reachable=reachable,
         transcriber_loaded=services.transcriber.is_loaded(),
+        ai=services.ai_client.name,
+        ai_ready=await services.ai_client.is_ready(),
         recording=services.sessions.state,
     )
 

@@ -10,12 +10,11 @@ export const ENCOUNTER_TYPE_LABELS: Record<EncounterType, string> = {
 export const SPEAKER_LABELS: Record<Speaker, string> = {
   clinician: 'Clinician',
   patient: 'Patient',
-  unassigned: 'Unassigned',
+  unknown: 'Unknown',
 }
 
 export const STAGE_LABELS: Record<ProcessingStage, string> = {
   transcription: 'Transcription',
-  'soap-generation': 'SOAP note generation',
 }
 
 export const SOAP_FIELD_META: Record<SoapField, { label: string; hint: string }> = {

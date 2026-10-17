@@ -33,5 +33,8 @@ class ManagedWhisperTranscriber:
     def is_loaded(self) -> bool:
         return self._manager.is_running
 
-    async def close(self) -> None:
+    async def release(self) -> None:
         await self._manager.stop()
+
+    async def close(self) -> None:
+        await self.release()

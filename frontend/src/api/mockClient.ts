@@ -1,8 +1,8 @@
-import { createMockSoap, createMockTranscript } from '../mocks/encounter'
+import { createMockReview, createMockSoap, createMockTranscript } from '../mocks/encounter'
 import { ApiRequestError, cancelledError, type AirSoapApi, type JobOptions } from './client'
 import type { ApiError } from './types'
 
-export type FailableOperation = 'transcription' | 'soap-generation' | 'submission'
+export type FailableOperation = 'transcription' | 'soap-generation' | 'clinical-review' | 'submission'
 
 export interface MockAirSoapApi extends AirSoapApi {
   /** Makes the next call of `operation` fail with a retryable error. */
@@ -21,6 +21,7 @@ const LATENCY_MS = {
   discardRecording: 100,
   transcription: 3000,
   soapGeneration: 3500,
+  clinicalReview: 2500,
   submission: 1200,
 }
 
@@ -35,6 +36,11 @@ const FAILURES: Record<FailableOperation, ApiError> = {
   'soap-generation': {
     code: 'SOAP_GENERATION_FAILED',
     message: 'The note generator timed out before finishing the SOAP draft.',
+    retryable: true,
+  },
+  'clinical-review': {
+    code: 'CLINICAL_REVIEW_FAILED',
+    message: 'The clinical review timed out before finishing. Your note was not changed.',
     retryable: true,
   },
   submission: {
@@ -120,7 +126,17 @@ export function createMockApi({ latencyScale = 1 }: MockApiOptions = {}): MockAi
 
     async generateSoap({ context }, options) {
       await runJob('soap-generation', LATENCY_MS.soapGeneration, options)
-      return { soap: createMockSoap(context), model: 'local-llm (mock)', generatedAt: new Date().toISOString() }
+      return {
+        soap: createMockSoap(context),
+        warnings: [],
+        model: 'local-llm (mock)',
+        generatedAt: new Date().toISOString(),
+      }
+    },
+
+    async runClinicalReview(request, options) {
+      await runJob('clinical-review', LATENCY_MS.clinicalReview, options)
+      return { review: createMockReview(request), model: 'local-llm (mock)', generatedAt: new Date().toISOString() }
     },
 
     async submitDemo(_request, options) {

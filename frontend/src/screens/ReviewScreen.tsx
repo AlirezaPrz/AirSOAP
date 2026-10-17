@@ -2,14 +2,22 @@ import { useId, useState } from 'react'
 import type { SoapField, Speaker, TranscriptSegment } from '../api/types'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { ClinicalReviewPanel } from '../components/ClinicalReviewPanel'
+import { Spinner } from '../components/icons'
 import { Alert, PageHeader, Panel, inputClass } from '../components/ui'
 import { ENCOUNTER_TYPE_LABELS, SOAP_FIELD_META, SPEAKER_LABELS, formatDate, formatDuration } from '../lib/format'
-import { SOAP_FIELDS, missingSoapFields, type StateOf } from '../workflow/reducer'
+import { calculateAge, toModelAge } from '../workflow/privacy'
+import { SOAP_FIELDS, hasSoapContent, missingSoapFields, type StateOf } from '../workflow/reducer'
 
 interface ReviewScreenProps {
   state: StateOf<'review'> | StateOf<'confirming'> | StateOf<'submitting'>
   onEditSegment: (segmentId: string, changes: Partial<Pick<TranscriptSegment, 'text' | 'speaker'>>) => void
   onEditSoap: (field: SoapField, value: string) => void
+  onGenerateSoap: () => void
+  onCancelSoap: () => void
+  onRunReview: () => void
+  onCancelReview: () => void
+  onDismissSuggestion: (suggestionId: string) => void
   onRequestSubmit: () => void
   onCancelSubmit: () => void
   onConfirmSubmit: () => void
@@ -19,7 +27,7 @@ interface ReviewScreenProps {
 const SPEAKER_STYLES: Record<Speaker, string> = {
   clinician: 'bg-accent-soft text-accent-ink',
   patient: 'bg-rail text-ink',
-  unassigned: 'bg-warn-soft text-warn-ink',
+  unknown: 'bg-warn-soft text-warn-ink',
 }
 
 function SegmentEditor({
@@ -75,17 +83,27 @@ export function ReviewScreen({
   state,
   onEditSegment,
   onEditSoap,
+  onGenerateSoap,
+  onCancelSoap,
+  onRunReview,
+  onCancelReview,
+  onDismissSuggestion,
   onRequestSubmit,
   onCancelSubmit,
   onConfirmSubmit,
   onDiscard,
 }: ReviewScreenProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false)
   const id = useId()
   const editable = state.status === 'review'
-  const { transcript, soap } = state.draft
+  const { transcript, soap, soapGeneration, warnings, review, version } = state.draft
   const missing = missingSoapFields(soap)
+  const hasContent = hasSoapContent(soap)
+  const generating = soapGeneration.status === 'running'
   const { patient, encounterType } = state.encounter
+  const age = calculateAge(patient.dateOfBirth)
+  const labelled = transcript.segments.filter((segment) => segment.speaker !== 'unknown').length
 
   return (
     <>
@@ -98,7 +116,7 @@ export function ReviewScreen({
               <Button variant="secondary" onClick={() => setConfirmDiscard(true)} disabled={!editable}>
                 Discard
               </Button>
-              <Button onClick={onRequestSubmit} disabled={!editable || missing.length > 0}>
+              <Button onClick={onRequestSubmit} disabled={!editable || generating || missing.length > 0}>
                 Submit note (demo)
               </Button>
             </>
@@ -106,16 +124,18 @@ export function ReviewScreen({
         />
       </div>
 
-      <div className="mb-6 space-y-3">
-        <Alert tone="warning" title="AI-generated draft">
-          Check every section against the visit before submitting. The draft may contain errors or omissions.
-        </Alert>
-        {missing.length > 0 && (
-          <p className="text-[15px] font-medium text-danger" role="status">
-            Complete all four sections to submit.
-          </p>
-        )}
-      </div>
+      {(hasContent || missing.length < 4) && (
+        <div className="mb-6 space-y-3">
+          <Alert tone="warning" title="AI-generated draft">
+            Check every section against the visit before submitting. The draft may contain errors or omissions.
+          </Alert>
+          {hasContent && missing.length > 0 && (
+            <p className="text-[15px] font-medium text-danger" role="status">
+              Complete all four sections to submit.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Panel>
@@ -126,10 +146,20 @@ export function ReviewScreen({
               {formatDuration(transcript.durationMs)}
             </p>
           </div>
-          <ol
-            aria-label="Transcript segments"
-            className="mt-5 space-y-5 px-6 pb-7 sm:px-8"
-          >
+          <div className="mt-4 space-y-3 px-6 sm:px-8">
+            {labelled === 0 && (
+              <Alert tone="info" title="Set who spoke">
+                Whisper cannot tell speakers apart, so every turn starts as Unknown. Set each one to Clinician or
+                Patient. The note and the clinical review use your labels.
+              </Alert>
+            )}
+            {labelled > 0 && (
+              <p className="text-sm text-ink-3 tabular-nums">
+                {labelled} of {transcript.segments.length} turns labelled
+              </p>
+            )}
+          </div>
+          <ol aria-label="Transcript segments" className="mt-5 space-y-5 px-6 pb-7 sm:px-8">
             {transcript.segments.map((segment, index) => (
               <SegmentEditor key={segment.id} segment={segment} index={index} editable={editable} onEdit={onEditSegment} />
             ))}
@@ -137,11 +167,85 @@ export function ReviewScreen({
         </Panel>
 
         <Panel className="px-6 py-6 sm:px-8 sm:py-7">
-          <h2 className="text-lg font-semibold">SOAP note</h2>
-          <div className="mt-5 space-y-8">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold">SOAP note</h2>
+            {hasContent && !generating && (
+              <Button variant="secondary" onClick={() => setConfirmRegenerate(true)} disabled={!editable}>
+                Regenerate
+              </Button>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {!hasContent && !generating && (
+              <div className="rounded-(--radius-panel) bg-accent-soft p-5 text-accent-ink">
+                <p className="text-[15px]">
+                  Label who spoke in the transcript, then generate a draft. A model on this device writes it from the
+                  transcript and your labels. You edit it before anything is submitted.
+                </p>
+                <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-4">
+                  <dt className="font-semibold">Sent to the model</dt>
+                  <dd>
+                    Labelled transcript with identifiers removed, age
+                    {age === null ? '' : ` (${toModelAge(age)} years)`}, encounter type
+                  </dd>
+                  <dt className="font-semibold">Never shared</dt>
+                  <dd>Name, date of birth, MRN</dd>
+                </dl>
+                <Button className="mt-4" onClick={onGenerateSoap} disabled={!editable}>
+                  Generate SOAP note
+                </Button>
+              </div>
+            )}
+
+            {generating && (
+              <Alert
+                tone="info"
+                action={
+                  <Button variant="secondary" onClick={onCancelSoap}>
+                    Cancel
+                  </Button>
+                }
+              >
+                <span className="flex items-center gap-2">
+                  <Spinner className="size-4" />
+                  Generating the SOAP note on this device. This can take a minute or two. You can keep editing;
+                  sections you type in are kept.
+                </span>
+              </Alert>
+            )}
+
+            {soapGeneration.status === 'failed' && (
+              <Alert
+                tone="error"
+                title="The note could not be generated"
+                action={
+                  soapGeneration.retryable ? (
+                    <Button variant="secondary" onClick={onGenerateSoap}>
+                      Try again
+                    </Button>
+                  ) : undefined
+                }
+              >
+                {soapGeneration.message}
+              </Alert>
+            )}
+
+            {warnings.length > 0 && (
+              <Alert tone="warning" title="Check these values against the visit">
+                <ul className="list-disc pl-5">
+                  {warnings.map((warning) => (
+                    <li key={`${warning.field}-${warning.message}`}>{warning.message}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+          </div>
+
+          <div className="mt-6 space-y-8">
             {SOAP_FIELDS.map((field) => {
               const { label, hint } = SOAP_FIELD_META[field]
-              const empty = missing.includes(field)
+              const empty = hasContent && missing.includes(field)
               const fieldId = `${id}-${field}`
               return (
                 <div key={field}>
@@ -174,6 +278,18 @@ export function ReviewScreen({
         </Panel>
       </div>
 
+      <div className="mt-6">
+        <ClinicalReviewPanel
+          review={review}
+          version={version}
+          segments={transcript.segments}
+          canRun={editable && hasContent && !generating}
+          onRun={onRunReview}
+          onCancel={onCancelReview}
+          onDismiss={onDismissSuggestion}
+        />
+      </div>
+
       {(state.status === 'confirming' || state.status === 'submitting') && (
         <ConfirmDialog
           title="Submit demo note?"
@@ -202,6 +318,24 @@ export function ReviewScreen({
               {transcript.segments.length} {transcript.segments.length === 1 ? 'turn' : 'turns'}
             </dd>
           </dl>
+        </ConfirmDialog>
+      )}
+
+      {confirmRegenerate && (
+        <ConfirmDialog
+          title="Replace the note with a new draft?"
+          confirmLabel="Regenerate"
+          cancelLabel="Keep my note"
+          onConfirm={() => {
+            setConfirmRegenerate(false)
+            onGenerateSoap()
+          }}
+          onCancel={() => setConfirmRegenerate(false)}
+        >
+          <p>
+            A new draft will replace the text in the four sections. Any section you edit while it is being generated
+            keeps your text.
+          </p>
         </ConfirmDialog>
       )}
 

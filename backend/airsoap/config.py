@@ -25,6 +25,12 @@ class RecorderKind(StrEnum):
     ARECORD = "arecord"
 
 
+class AiKind(StrEnum):
+    AUTO = "auto"
+    MOCK = "mock"
+    OLLAMA = "ollama"
+
+
 class WhisperLifecycle(StrEnum):
     EXTERNAL = "external"  # whisper-server is run separately (e.g. its own systemd service)
     ON_DEMAND = "on-demand"  # the backend starts it for a job and stops it afterwards
@@ -75,6 +81,19 @@ class Settings(BaseSettings):
     whisper_idle_seconds: float = Field(default=20, ge=0)
     whisper_startup_timeout_seconds: float = Field(default=90, gt=0)
 
+    ai: AiKind = AiKind.AUTO
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = Field(
+        default="qwen2.5:3b-instruct", min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9._/:-]*$"
+    )
+    ollama_timeout_seconds: float = Field(default=600, gt=0)
+    # How long Ollama keeps the model loaded after a task: "5m", "30s", "0" (unload at once) or "-1".
+    ollama_keep_alive: str = Field(default="5m", pattern=r"^(-1|0|\d+[smh])$")
+    ollama_num_ctx: int = Field(default=8192, ge=2048, le=32768)
+    ai_max_attempts: int = Field(default=2, ge=1, le=3)
+    max_pending_ai_jobs: int = Field(default=2, ge=1)
+    mock_ai_seconds: float = Field(default=1.0, ge=0)
+
     job_ttl_seconds: int = Field(default=600, ge=10)
     max_pending_jobs: int = Field(default=4, ge=1)
     mock_transcribe_seconds: float = Field(default=2.0, ge=0)
@@ -109,6 +128,11 @@ class Settings(BaseSettings):
             raise ValueError("whisper_url must be an http(s) URL")
         if parts.hostname not in LOOPBACK_HOSTS and not self.allow_remote_whisper:
             raise ValueError("whisper_url must point at this device (127.0.0.1); audio never leaves it")
+        ollama = urlsplit(self.ollama_url)
+        if ollama.scheme not in {"http", "https"} or ollama.hostname not in LOOPBACK_HOSTS:
+            raise ValueError(
+                "ollama_url must point at this device (127.0.0.1); clinical text never leaves it"
+            )
         if self.whisper_lifecycle is WhisperLifecycle.ON_DEMAND:
             if parts.hostname not in LOOPBACK_HOSTS or parts.port is None:
                 raise ValueError(
@@ -123,6 +147,12 @@ class Settings(BaseSettings):
         if self.recorder is RecorderKind.AUTO:
             return RecorderKind.MOCK if _is_mac() else RecorderKind.ARECORD
         return self.recorder
+
+    @cached_property
+    def resolved_ai(self) -> AiKind:
+        if self.ai is AiKind.AUTO:
+            return AiKind.MOCK if _is_mac() else AiKind.OLLAMA
+        return self.ai
 
     @cached_property
     def resolved_transcriber(self) -> TranscriberKind:

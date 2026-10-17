@@ -246,6 +246,7 @@ export function DashboardScreen({ onStart, showDemoControls }: DashboardScreenPr
               <option value="none">None</option>
               <option value="transcription">Transcription fails once</option>
               <option value="soap-generation">SOAP generation fails once</option>
+              <option value="clinical-review">Clinical review fails once</option>
               <option value="submission">Demo submission fails once</option>
             </select>
           </section>

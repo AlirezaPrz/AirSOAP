@@ -63,6 +63,11 @@ export default function App({ api: providedApi }: AppProps) {
             state={state}
             onEditSegment={workflow.editTranscriptSegment}
             onEditSoap={workflow.editSoapField}
+            onGenerateSoap={workflow.generateSoap}
+            onCancelSoap={workflow.cancelSoap}
+            onRunReview={workflow.runClinicalReview}
+            onCancelReview={workflow.cancelClinicalReview}
+            onDismissSuggestion={workflow.dismissSuggestion}
             onRequestSubmit={workflow.requestSubmit}
             onCancelSubmit={workflow.cancelSubmit}
             onConfirmSubmit={workflow.confirmSubmit}

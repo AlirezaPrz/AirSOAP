@@ -25,6 +25,8 @@ def test_health_reports_components_and_state(settings):
         "transcriber": "fake-transcriber",
         "transcriberReachable": False,
         "transcriberLoaded": False,
+        "ai": "mock",
+        "aiReady": True,
         "recording": "idle",
     }
 
@@ -176,7 +178,7 @@ def test_status_progresses_from_processing_to_completed(settings):
         processing = wait_for_status(client, job_id, {"processing"})
         assert processing["progress"] is None
         assert processing["transcript"] is None
-        transcriber.release(client)
+        transcriber.let_finish(client)
         completed = wait_for_status(client, job_id, {"completed"})
     assert completed["progress"] == 100
 
@@ -190,7 +192,7 @@ def test_jobs_run_one_at_a_time_in_order(settings):
         queued = client.get(f"/api/transcriptions/{second}").json()
         assert queued["status"] == "queued"
         assert queued["progress"] == 0
-        transcriber.release(client)
+        transcriber.let_finish(client)
         first_body = wait_for_status(client, first, {"completed"})
         second_body = wait_for_status(client, second, {"completed"})
     assert transcriber.max_active == 1
@@ -219,7 +221,7 @@ def test_cancel_queued_job_skips_transcription(settings):
         wait_for_status(client, first, {"processing"})
         assert client.post(f"/api/transcriptions/{second}/cancel").json()["status"] == "cancelled"
         assert len(audio_files(settings)) == 1  # only the first job's audio remains
-        transcriber.release(client)
+        transcriber.let_finish(client)
         wait_for_status(client, first, {"completed"})
     assert len(transcriber.calls) == 1
 
@@ -243,7 +245,7 @@ def test_queue_limit(settings):
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "QUEUE_FULL"
         assert len(audio_files(settings)) == 1  # the rejected recording was deleted
-        transcriber.release(client)
+        transcriber.let_finish(client)
 
 
 def test_audio_is_deleted_after_success_and_on_shutdown(settings):

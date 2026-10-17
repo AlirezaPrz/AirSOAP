@@ -1,4 +1,13 @@
-import type { PatientAge, PatientIdentity, SoapGenerationRequest, Transcript } from '../api/types'
+import type {
+  AiSegment,
+  ClinicalReviewRequest,
+  PatientAge,
+  PatientIdentity,
+  SoapGenerationContext,
+  SoapGenerationRequest,
+  SoapNote,
+  Transcript,
+} from '../api/types'
 import type { Encounter } from './reducer'
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -84,27 +93,52 @@ export function redactIdentifiers(text: string, patient: PatientIdentity): strin
   return terms.reduce((result, term) => result.replace(wholeWord(term), REDACTED), text)
 }
 
+function buildContext(encounter: Encounter, today: Date): SoapGenerationContext {
+  const age = calculateAge(encounter.patient.dateOfBirth, today)
+  if (age === null) throw new Error('Cannot derive patient age from date of birth.')
+  return { patientAge: toModelAge(age), encounterType: encounter.encounterType }
+}
+
+function buildSegments(encounter: Encounter, transcript: Transcript): AiSegment[] {
+  return transcript.segments.map(({ id, speaker, text }) => ({
+    id,
+    speaker,
+    text: redactIdentifiers(text, encounter.patient),
+  }))
+}
+
 /**
- * The only way to build what the language model receives. Name, date of
- * birth and MRN are never copied in; the age is derived locally.
+ * The only way to build what the SOAP model receives. Name, date of birth and
+ * MRN are never copied in; the age is derived locally. Each segment carries the
+ * speaker label the clinician set.
  */
 export function buildSoapRequest(
   encounter: Encounter,
   transcript: Transcript,
   today: Date = new Date(),
 ): SoapGenerationRequest {
-  const age = calculateAge(encounter.patient.dateOfBirth, today)
-  if (age === null) throw new Error('Cannot derive patient age from date of birth.')
+  return { segments: buildSegments(encounter, transcript), context: buildContext(encounter, today) }
+}
 
+/**
+ * What the Clinical Review model receives: the labelled transcript and the
+ * clinician's current note. Identifiers are removed from both, in case the
+ * clinician typed one into the note.
+ */
+export function buildClinicalReviewRequest(
+  encounter: Encounter,
+  transcript: Transcript,
+  soap: SoapNote,
+  today: Date = new Date(),
+): ClinicalReviewRequest {
   return {
-    transcript: {
-      language: transcript.language,
-      durationMs: transcript.durationMs,
-      segments: transcript.segments.map((segment) => ({
-        ...segment,
-        text: redactIdentifiers(segment.text, encounter.patient),
-      })),
+    segments: buildSegments(encounter, transcript),
+    soap: {
+      subjective: redactIdentifiers(soap.subjective, encounter.patient),
+      objective: redactIdentifiers(soap.objective, encounter.patient),
+      assessment: redactIdentifiers(soap.assessment, encounter.patient),
+      plan: redactIdentifiers(soap.plan, encounter.patient),
     },
-    context: { patientAge: toModelAge(age), encounterType: encounter.encounterType },
+    context: buildContext(encounter, today),
   }
 }
