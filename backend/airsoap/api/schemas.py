@@ -3,17 +3,13 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import Field
 
 from ..jobs import Job, JobStatus
+from ..models import CamelModel
 from ..sessions import RecordingState
 
 HexId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
-
-
-class CamelModel(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class HealthResponse(CamelModel):
@@ -23,6 +19,8 @@ class HealthResponse(CamelModel):
     transcriber: str
     transcriber_reachable: bool
     transcriber_loaded: bool
+    ai: str
+    ai_ready: bool
     recording: RecordingState
 
 
