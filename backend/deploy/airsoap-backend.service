@@ -1,0 +1,16 @@
+[Unit]
+Description=AirSOAP backend (FastAPI, loopback only)
+After=whisper-server.service
+Wants=whisper-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/AirSOAP/backend
+EnvironmentFile=%h/.config/airsoap/airsoap.env
+ExecStart=%h/AirSOAP/backend/.venv/bin/python -m airsoap
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

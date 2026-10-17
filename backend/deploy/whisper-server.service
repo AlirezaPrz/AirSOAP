@@ -1,0 +1,24 @@
+[Unit]
+Description=whisper.cpp server for AirSOAP (small.en, loopback only)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/airsoap/airsoap.env
+# Bound to 127.0.0.1 on purpose: never expose Whisper to the LAN.
+ExecStart=%h/src/whisper.cpp/build/bin/whisper-server \
+    --model ${WHISPER_MODEL} \
+    --host 127.0.0.1 \
+    --port ${WHISPER_PORT} \
+    --threads ${WHISPER_THREADS} \
+    --language en
+# whisper.cpp prints recognized text to stdout; discard it so transcripts never
+# reach the journal. Errors and model-loading messages go to stderr and are kept.
+StandardOutput=null
+StandardError=journal
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
