@@ -55,7 +55,9 @@ Both return `202 {jobId, kind}` at once, because a 3B model on the Pi can take m
 
 **What the checks do**
 - **Output validation:** every answer must match a strict JSON schema (also given to Ollama as its output format). An unusable answer is retried once, then reported as `AI_INVALID_OUTPUT`. It is never shown as a result.
-- **SOAP grounding:** the prompt forbids inventing findings, treats a clinician's question as a question and not as a symptom, never assumes a negative, and asks for "Not documented" where the transcript is silent. On top of that, any number in the note that does not appear in the transcript (digits or spelled-out) comes back as a warning, so a made-up dose or vital is flagged to the clinician.
+- **SOAP: no invented diagnosis or plan.** The model documents what was said; it is told never to diagnose. The Assessment may contain only a diagnosis or impression the clinician said out loud, and the Plan only treatments, tests and advice the clinician said out loud. A test result the clinician states (such as "the rapid test is positive") is recorded as an Objective finding, not turned into a diagnosis. The model must first answer two yes/no fields, `assessmentStated` and `planStated`, before it writes those sections. If it answers no, the server replaces the section with "Not documented." whatever the model wrote. If the Assessment still reads like a diagnosis (wording such as "consistent with", "likely", "suspected") and nothing resembling a diagnosis or impression appears in what the clinician said, the clinician gets a warning to check it. Only the clinician's words count, not the patient's.
+- **SOAP: no invented numbers.** The prompt also forbids inventing findings or doses, treats a clinician's question as a question and not as a symptom, never assumes a negative, and asks for "Not documented" where the transcript is silent. Any number in the note that does not appear in the transcript (digits or spelled-out) comes back as a warning, so a made-up dose or vital is flagged.
+- **These checks reduce the risk; they do not remove it.** A model can still word something misleadingly. The clinician reviews and edits every section before anything is submitted.
 - **Review evidence:** every suggestion must quote text that really appears in the transcript or the note. The server checks each quote, attaches the segment ID or note field, and drops any suggestion whose quote it cannot find (counted in `omittedUnverified`). A differential with no verified evidence is dropped, so an empty list is a normal result. Suggestions that tell the clinician to start, stop or change a treatment are dropped as well.
 - **Stable IDs:** a suggestion's ID comes from its category and wording, so rerunning the review after an edit keeps the same ID and a dismissed suggestion stays dismissed.
 - **The note is never changed by the backend.** Clinical Review only returns suggestions.
@@ -66,27 +68,9 @@ Both return `202 {jobId, kind}` at once, because a 3B model on the Pi can take m
 
 A 4 GB Pi cannot hold whisper-server (about 650 MB) and Qwen (about 2 GB) together. A shared gate makes every transcription and every AI task take turns: before an AI task the backend stops whisper-server, and before a transcription it asks Ollama to unload Qwen. Ollama itself should also be limited to one model and one request (`deploy/ollama-override.conf`). `AIRSOAP_OLLAMA_KEEP_ALIVE` (default `5m`) lets a note and its review run back to back without reloading the model.
 
-### Set up Ollama on the Pi
+### Setting up Ollama
 
-The Pi already has Ollama and the models (`ollama list` shows `qwen2.5:3b-instruct`). No download is needed.
-
-```bash
-# 1. One model, one request at a time, loopback only (needs sudo, once)
-sudo systemctl edit ollama        # paste the lines from deploy/ollama-override.conf
-sudo systemctl restart ollama
-ss -ltn | grep 11434              # must show 127.0.0.1:11434, never 0.0.0.0
-
-# 2. Add the "Local language model" block from deploy/airsoap.env.example to
-#    ~/.config/airsoap/airsoap.env, then restart the backend
-systemctl --user restart airsoap-backend.service
-
-# 3. Check it
-curl -s http://127.0.0.1:8000/api/health     # "ai":"ollama","aiReady":true
-python3 scripts/smoke_ai.py                   # runs SOAP then review on a fictional visit; prints timings
-python3 scripts/smoke_ai.py --show            # also prints the note and suggestions to this terminal
-```
-
-The smoke test sends only an invented transcript. Expect each task to take from tens of seconds to a few minutes on the Pi; measure it and raise `AIRSOAP_OLLAMA_TIMEOUT_SECONDS` if needed. The default model is the stock `qwen2.5:3b-instruct`. `airsoap-3b:latest` is also installed; look at it with `ollama show airsoap-3b --modelfile` before switching, since it may carry its own system prompt.
+Covered in [Deploy on the Raspberry Pi](#deploy-on-the-raspberry-pi), step 4. The default model is the stock `qwen2.5:3b-instruct`. `airsoap-3b:latest` is also installed; look at it with `ollama show airsoap-3b --modelfile` before switching, since it may carry its own system prompt. Expect each task to take from tens of seconds to a few minutes on the Pi; `scripts/smoke_ai.py` prints the timings, and `AIRSOAP_OLLAMA_TIMEOUT_SECONDS` raises the limit.
 
 ### Privacy for the AI tasks
 
@@ -157,40 +141,36 @@ VITE_AIRSOAP_API=http npm run dev     # Vite proxies /api to 127.0.0.1:8000
 
 ## Deploy on the Raspberry Pi
 
-These steps assume the layout you already have: the repo at `~/AirSOAP`, whisper.cpp at `~/src/whisper.cpp` with `build/bin/whisper-server`, and the model at `~/src/whisper.cpp/models/ggml-small.en.bin`. Lingering is already enabled with `loginctl enable-linger ai-innovate`.
+> **The one rule that causes most problems.** The backend reads `~/.config/airsoap/airsoap.env` **only when it starts**. If you edit that file and do not restart the service, the backend keeps running with the old settings and nothing tells you. After **every** edit, run:
+>
+> ```bash
+> systemctl --user daemon-reload && systemctl --user restart airsoap-backend.service
+> bash scripts/check_config.sh     # confirms the running backend now has your settings
+> ```
 
-**Already deployed the always-on version?** Switch to on-demand like this:
+These steps assume the layout you already have: the repo at `~/AirSOAP`, whisper.cpp at `~/src/whisper.cpp` with `build/bin/whisper-server`, the model at `~/src/whisper.cpp/models/ggml-small.en.bin`, and Ollama with `qwen2.5:3b-instruct`. Lingering is already enabled with `loginctl enable-linger ai-innovate`. Run every command from `~/AirSOAP/backend` unless it says otherwise.
 
-```bash
-cd ~/AirSOAP && git pull                              # on feature/backend-whisper-transcription
-systemctl --user disable --now whisper-server.service  # the backend now manages whisper-server itself
-rm ~/.config/systemd/user/whisper-server.service
-# Add the on-demand lines from deploy/airsoap.env.example to ~/.config/airsoap/airsoap.env
-# (everything under "Whisper: started only while transcribing"), then:
-cp deploy/airsoap-backend.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user restart airsoap-backend.service
-ps -C whisper-server    # nothing: it starts with the first transcription
-```
+### Fresh install
 
-**1. Get the branch.**
+**1. Get the code.**
 
 ```bash
 cd ~/AirSOAP
 git fetch origin
-git switch feature/backend-whisper-transcription
+git switch <branch>        # the branch you are deploying, e.g. dev, or feature/qwen-clinical-ai
+git pull
+cd backend
 ```
 
 **2. Create the virtualenv.**
 
 ```bash
-cd ~/AirSOAP/backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-# Optional: run the test suite on the Pi too
-.venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest
+.venv/bin/python -m pytest      # optional: the test suite needs no microphone, Whisper or Ollama
 ```
 
-**3. Configure.**
+**3. Create the env file.**
 
 ```bash
 mkdir -p ~/.config/airsoap
@@ -198,42 +178,101 @@ cp deploy/airsoap.env.example ~/.config/airsoap/airsoap.env
 chmod 600 ~/.config/airsoap/airsoap.env
 ```
 
-The example is already filled in for your microphone: `arecord -l` shows card 2 named `MICROPHONE`, so `AIRSOAP_ARECORD_DEVICE=plughw:CARD=MICROPHONE,DEV=0`. Check that this device records:
+The example is already filled in for your setup: the microphone (`arecord -l` shows card 2 named `MICROPHONE`), the whisper-server and model paths, and the Ollama model. Open it once and check the paths match your Pi. Rules for this file: one `KEY=value` per line, **comments on their own lines** (a `# note` after a value becomes part of the value), and no quotes needed.
+
+Check the microphone records:
 
 ```bash
 arecord -D plughw:CARD=MICROPHONE,DEV=0 -f S16_LE -r 16000 -c 1 -d 3 /tmp/mic-check.wav && rm /tmp/mic-check.wav
 ```
 
-**4. Install and start the backend** (a systemd user unit, no sudo).
+**4. Set up Ollama** (needs sudo, once). This limits Ollama to one model and one request at a time, which a 4 GB Pi needs.
+
+```bash
+sudo systemctl edit ollama       # paste the lines from deploy/ollama-override.conf, save
+sudo systemctl restart ollama
+ss -ltn | grep 11434             # must show 127.0.0.1:11434, never 0.0.0.0
+ollama list                      # must show the model named in AIRSOAP_OLLAMA_MODEL
+```
+
+**5. Install and start the backend** (a systemd user unit, no sudo).
 
 ```bash
 mkdir -p ~/.config/systemd/user
 cp deploy/airsoap-backend.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now airsoap-backend.service
-systemctl --user status airsoap-backend.service
 ```
 
-There is no separate whisper-server service: the backend starts it with the first transcription and stops it again. Its output is not forwarded to the journal; if it fails to start, the last few error lines are logged in `journalctl --user -u airsoap-backend`. Prefer to keep it always loaded? Use the optional `deploy/whisper-server.service` and set `AIRSOAP_WHISPER_LIFECYCLE=external`.
+There is no separate whisper-server service: the backend starts whisper-server with the first transcription and stops it again after `AIRSOAP_WHISPER_IDLE_SECONDS`. Prefer to keep it always loaded? Use the optional `deploy/whisper-server.service` and set `AIRSOAP_WHISPER_LIFECYCLE=external`.
 
-**5. Check it end to end.**
+**6. Check the configuration was loaded.**
+
+```bash
+bash scripts/check_config.sh
+```
+
+It compares the env file with what the running backend actually has and prints `[FIX]` lines for anything wrong: a setting that needs a restart, a missing path, Windows line endings, a comment on a value line, whisper-server in the wrong mode, or Ollama not ready. Fix what it says and run it again until it ends with `All good.`
+
+**7. Check it end to end.**
 
 ```bash
 curl -s http://127.0.0.1:8000/api/health
-# expect "recorder":"arecord", "transcriberReachable":true, "transcriberLoaded":false (it loads on demand)
-
-python3 scripts/smoke_test.py --seconds 8                    # speak while it records
-python3 scripts/smoke_test.py --seconds 8 --show-transcript  # also print the text to this terminal
 ```
 
-The first run after a quiet period includes the model load (a few seconds). The smoke test prints how long transcription took and the realtime factor (processing time ÷ audio length).
+Look for these three things in the answer:
+- `"transcriber":"whisper-server (on demand)"` and `"transcriberReachable":true`. If it says just `"whisper-server"`, the backend is **not** in on-demand mode: the env file lacks `AIRSOAP_WHISPER_LIFECYCLE=on-demand`, or you did not restart after adding it.
+- `"transcriberLoaded":false`. This is normal: the model loads when needed.
+- `"ai":"ollama"` and `"aiReady":true`.
 
-Check that whisper-server comes and goes: `ps -C whisper-server -o pid,rss,etime` shows nothing before the test, a process (about 650 MB RSS) during it, and nothing again after `AIRSOAP_WHISPER_IDLE_SECONDS`. Note that `ps`'s `%CPU` is a lifetime average, so read `top` for current usage. The backend logs the same numbers per job, without any text: `journalctl --user -u airsoap-backend`.
-
-**To run in the foreground instead of systemd** (useful while debugging):
+Then run the two smoke tests:
 
 ```bash
-cd ~/AirSOAP/backend
+python3 scripts/smoke_test.py --seconds 8 --show-transcript   # speak while it records
+python3 scripts/smoke_ai.py --show                            # SOAP then review on a fictional visit; prints timings
+```
+
+The first transcription after a quiet period includes the model load (a few seconds). Check that whisper-server comes and goes: `ps -C whisper-server -o pid,rss,etime` shows nothing before the test, a process (about 650 MB RSS) during it, and nothing again after the idle time. `ps`'s `%CPU` is a lifetime average, so read `top` for current usage.
+
+### After you change anything
+
+| You changed | Do this |
+| --- | --- |
+| `~/.config/airsoap/airsoap.env` | `systemctl --user daemon-reload && systemctl --user restart airsoap-backend.service`, then `bash scripts/check_config.sh` |
+| The code (`git pull`) | `.venv/bin/pip install -r requirements.txt`, then restart the service as above |
+| `airsoap-backend.service` | Copy it to `~/.config/systemd/user/`, then `daemon-reload` and restart |
+| Ollama's settings | `sudo systemctl restart ollama` |
+
+### Already ran the always-on version?
+
+Switch to on-demand like this:
+
+```bash
+systemctl --user disable --now whisper-server.service    # the backend now manages whisper-server itself
+rm ~/.config/systemd/user/whisper-server.service
+# Make sure ~/.config/airsoap/airsoap.env has the lines under "Whisper: started only while transcribing"
+# (compare with deploy/airsoap.env.example), then:
+cp deploy/airsoap-backend.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user restart airsoap-backend.service
+bash scripts/check_config.sh
+ps -C whisper-server    # nothing: it starts with the first transcription
+```
+
+### Reading the logs
+
+The Pi does not keep a per-user journal, so `journalctl --user -u airsoap-backend` may print "No journal files were found". Use this instead:
+
+```bash
+sudo journalctl _SYSTEMD_USER_UNIT=airsoap-backend -n 50 --no-pager
+```
+
+The backend logs job IDs, durations and timings, never transcript or note text.
+
+### Run in the foreground (for debugging)
+
+Stop the service first (`systemctl --user stop airsoap-backend`) so two backends do not fight over port 8000:
+
+```bash
 set -a; . ~/.config/airsoap/airsoap.env; set +a
 .venv/bin/python -m airsoap
 ```
@@ -284,11 +323,18 @@ Then open http://127.0.0.1:8000 on the Pi.
 
 ## Troubleshooting
 
+Start with `bash scripts/check_config.sh`. It finds the most common problems and says what to do.
+
 | Symptom | Check |
 | --- | --- |
-| `transcriberReachable: false` | On-demand: check `AIRSOAP_WHISPER_SERVER_PATH` (executable) and `AIRSOAP_WHISPER_MODEL_PATH` (exists). External: `systemctl --user status whisper-server`, and `ss -ltn \| grep 8178` |
+| I edited the env file but nothing changed | The backend reads it only at start: `systemctl --user daemon-reload && systemctl --user restart airsoap-backend.service`, then `bash scripts/check_config.sh` |
+| Health shows `"transcriber":"whisper-server"` with no `(on demand)`, and `transcriberReachable: false` | The backend is in always-on mode. The env file lacks `AIRSOAP_WHISPER_LIFECYCLE=on-demand`, or the service was not restarted after you added it |
+| `transcriberReachable: false` in on-demand mode | `AIRSOAP_WHISPER_SERVER_PATH` must be an executable file and `AIRSOAP_WHISPER_MODEL_PATH` must exist (`check_config.sh` tests both). In external mode: `ss -ltn \| grep 8178` |
+| `smoke_test.py` says "The transcriber is not ready" | Same as the two rows above |
+| Two backends: the old one still answers | `ss -ltnp \| grep 8000` shows what holds the port. Stop a foreground `python -m airsoap` with Ctrl+C, then restart the service |
 | `TRANSCRIBER_PORT_IN_USE` | An old always-on whisper-server is still running: `systemctl --user disable --now whisper-server.service` |
-| "The transcription service could not be started." | The backend log has whisper-server's last error lines. Check the model file and that the binary runs: `~/src/whisper.cpp/build/bin/whisper-server --help` |
+| "The transcription service could not be started." | The backend log has whisper-server's last error lines (see "Reading the logs"). Check the model file and that the binary runs: `~/src/whisper.cpp/build/bin/whisper-server --help` |
+| `journalctl --user` says "No journal files were found" | Use `sudo journalctl _SYSTEMD_USER_UNIT=airsoap-backend -n 50 --no-pager` |
 | Start fails with "The microphone could not be opened." | Another program holds the device; check `arecord -l` and the device name in the env file. The backend log has arecord's error line |
 | "The recording contains no audio." | The recording was under 0.3 s, or the microphone produced no data |
 | `TRANSCRIPTION_TIMEOUT` | Increase `AIRSOAP_WHISPER_TIMEOUT_SECONDS`, or check the Pi's CPU load and temperature |
@@ -296,4 +342,5 @@ Then open http://127.0.0.1:8000 on the Pi.
 | `AI_TIMEOUT` | Increase `AIRSOAP_OLLAMA_TIMEOUT_SECONDS`; check CPU load, temperature and free RAM (`free -h`) |
 | `AI_MODEL_MISSING` | The tag in `AIRSOAP_OLLAMA_MODEL` is not installed; use one from `ollama list` |
 | `AI_INVALID_OUTPUT` | The model's answer failed validation twice. Try again; if it keeps happening, shorten the transcript |
+| The note has "Not documented." where you expected an Assessment or Plan | Nobody said a diagnosis or plan aloud in the transcript. That is intended: write it yourself |
 | Services stop when you log out | `loginctl show-user ai-innovate \| grep Linger` should say `yes` |
