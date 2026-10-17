@@ -61,6 +61,20 @@ html {
   animation: level ease-in-out infinite;
 }
 
+/* Work of unknown length, e.g. a single whisper-server request. */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.progress-indeterminate {
+  animation: indeterminate 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

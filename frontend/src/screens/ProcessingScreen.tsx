@@ -13,7 +13,7 @@ type StepStatus = 'pending' | 'active' | 'done' | 'failed'
 const STAGES: ProcessingStage[] = ['transcription', 'soap-generation']
 
 const STAGE_DESCRIPTIONS: Record<ProcessingStage, string> = {
-  transcription: 'Converting the recording to text with speaker labels.',
+  transcription: 'Converting the whole recording to text on this device.',
   'soap-generation': 'Drafting Subjective, Objective, Assessment and Plan from the transcript.',
 }
 
@@ -24,7 +24,15 @@ const STATUS_TEXT: Record<StepStatus, string> = {
   failed: 'Failed',
 }
 
-function StageRow({ stage, status, progress }: { stage: ProcessingStage; status: StepStatus; progress: number }) {
+function StageRow({
+  stage,
+  status,
+  progress,
+}: {
+  stage: ProcessingStage
+  status: StepStatus
+  progress: number | null
+}) {
   return (
     <li className="flex gap-5">
       <span
@@ -54,7 +62,7 @@ function StageRow({ stage, status, progress }: { stage: ProcessingStage; status:
               status === 'failed' ? 'font-medium text-danger' : status === 'active' ? 'font-medium text-ink' : 'text-ink-3'
             }`}
           >
-            {status === 'active' ? `${Math.round(progress * 100)}%` : STATUS_TEXT[status]}
+            {status !== 'active' ? STATUS_TEXT[status] : progress === null ? 'Working…' : `${Math.round(progress * 100)}%`}
           </p>
         </div>
         <p className="mt-1 text-[15px] text-ink-2">{STAGE_DESCRIPTIONS[stage]}</p>

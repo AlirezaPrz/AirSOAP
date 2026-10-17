@@ -77,7 +77,24 @@ export function Alert({
   )
 }
 
-export function ProgressBar({ value, label, tone = 'accent' }: { value: number; label: string; tone?: 'accent' | 'danger' }) {
+/** `value` is 0–1, or null for work of unknown length (an animated, indeterminate bar). */
+export function ProgressBar({
+  value,
+  label,
+  tone = 'accent',
+}: {
+  value: number | null
+  label: string
+  tone?: 'accent' | 'danger'
+}) {
+  const fill = tone === 'danger' ? 'bg-danger' : 'bg-accent'
+  if (value === null) {
+    return (
+      <div role="progressbar" aria-label={label} className="h-1.5 w-full overflow-hidden rounded-full bg-rail">
+        <div className={`progress-indeterminate h-full w-1/3 rounded-full ${fill}`} />
+      </div>
+    )
+  }
   const percent = Math.round(value * 100)
   return (
     <div
@@ -89,7 +106,7 @@ export function ProgressBar({ value, label, tone = 'accent' }: { value: number; 
       className="h-1.5 w-full overflow-hidden rounded-full bg-rail"
     >
       <div
-        className={`h-full rounded-full transition-[width] duration-300 ease-out ${tone === 'danger' ? 'bg-danger' : 'bg-accent'}`}
+        className={`h-full rounded-full transition-[width] duration-300 ease-out ${fill}`}
         style={{ width: `${percent}%` }}
       />
     </div>

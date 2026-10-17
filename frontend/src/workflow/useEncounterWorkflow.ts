@@ -22,7 +22,7 @@ async function runProcessing(
   dispatch: Dispatch<WorkflowAction>,
   signal: AbortSignal,
 ) {
-  const reportProgress = (stage: ProcessingStage) => (progress: number) => {
+  const reportProgress = (stage: ProcessingStage) => (progress: number | null) => {
     if (!signal.aborted) dispatch({ type: 'PROCESSING_PROGRESS', stage, progress })
   }
 

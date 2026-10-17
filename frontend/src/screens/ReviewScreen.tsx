@@ -19,6 +19,7 @@ interface ReviewScreenProps {
 const SPEAKER_STYLES: Record<Speaker, string> = {
   clinician: 'bg-accent-soft text-accent-ink',
   patient: 'bg-rail text-ink',
+  unassigned: 'bg-warn-soft text-warn-ink',
 }
 
 function SegmentEditor({

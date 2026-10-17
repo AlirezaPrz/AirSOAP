@@ -8,7 +8,9 @@ describe('createMockApi', () => {
   it('reports monotonically increasing progress up to 1', async () => {
     const api = createMockApi({ latencyScale: 0 })
     const progress: number[] = []
-    const { transcript } = await api.transcribe(request, { onProgress: (p) => progress.push(p) })
+    const { transcript } = await api.transcribe(request, { onProgress: (p) => {
+        if (p !== null) progress.push(p)
+      }, })
 
     expect(transcript.segments.length).toBeGreaterThan(0)
     expect(progress.at(-1)).toBe(1)

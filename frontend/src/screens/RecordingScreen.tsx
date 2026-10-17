@@ -9,6 +9,8 @@ import type { StateOf } from '../workflow/reducer'
 
 interface RecordingScreenProps {
   state: StateOf<'ready'> | StateOf<'recording'>
+  /** True with the mock API: no microphone is used. */
+  simulated: boolean
   onStartRecording: () => Promise<void>
   onStopRecording: () => Promise<void>
   onCancel: () => void
@@ -56,7 +58,13 @@ function LevelMeter({ active }: { active: boolean }) {
   )
 }
 
-export function RecordingScreen({ state, onStartRecording, onStopRecording, onCancel }: RecordingScreenProps) {
+export function RecordingScreen({
+  state,
+  simulated,
+  onStartRecording,
+  onStopRecording,
+  onCancel,
+}: RecordingScreenProps) {
   const recording = state.status === 'recording'
   const [consent, setConsent] = useState(false)
   const [pending, setPending] = useState(false)
@@ -81,7 +89,11 @@ export function RecordingScreen({ state, onStartRecording, onStopRecording, onCa
     <>
       <PageHeader
         title={recording ? 'Recording in progress' : 'Ready to record'}
-        description="Audio capture is simulated in this prototype. No microphone is accessed."
+        description={
+          simulated
+            ? 'Audio capture is simulated in this prototype. No microphone is accessed.'
+            : 'Audio is recorded by the microphone on this device and never leaves it.'
+        }
         actions={
           <Button variant="secondary" onClick={() => setConfirmCancel(true)} disabled={pending}>
             Cancel encounter

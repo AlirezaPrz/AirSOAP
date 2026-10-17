@@ -10,6 +10,7 @@ export const ENCOUNTER_TYPE_LABELS: Record<EncounterType, string> = {
 export const SPEAKER_LABELS: Record<Speaker, string> = {
   clinician: 'Clinician',
   patient: 'Patient',
+  unassigned: 'Unassigned',
 }
 
 export const STAGE_LABELS: Record<ProcessingStage, string> = {

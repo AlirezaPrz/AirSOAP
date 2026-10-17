@@ -35,7 +35,8 @@ export type WorkflowState =
       encounter: Encounter
       recordingId: string
       stage: ProcessingStage
-      progress: number
+      /** 0–1, or null while the backend cannot report progress. */
+      progress: number | null
       attempt: number
       /** Kept once transcription succeeds so a retry resumes at SOAP generation. */
       transcript: Transcript | null
@@ -61,7 +62,7 @@ export type WorkflowAction =
   | { type: 'START_ENCOUNTER'; encounter: Encounter }
   | { type: 'RECORDING_STARTED'; encounterId: string; recordingId: string; startedAt: number }
   | { type: 'RECORDING_STOPPED'; recordingId: string }
-  | { type: 'PROCESSING_PROGRESS'; stage: ProcessingStage; progress: number }
+  | { type: 'PROCESSING_PROGRESS'; stage: ProcessingStage; progress: number | null }
   | { type: 'TRANSCRIPT_READY'; transcript: Transcript }
   | { type: 'SOAP_READY'; soap: SoapNote }
   | { type: 'PROCESSING_FAILED'; error: ProcessingError }
@@ -135,7 +136,7 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
 
     case 'PROCESSING_PROGRESS':
       if (state.status !== 'processing' || state.stage !== action.stage) return state
-      return { ...state, progress: clamp01(action.progress) }
+      return { ...state, progress: action.progress === null ? null : clamp01(action.progress) }
 
     case 'TRANSCRIPT_READY':
       if (state.status !== 'processing' || state.stage !== 'transcription') return state
