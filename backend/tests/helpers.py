@@ -1,6 +1,7 @@
 """Fakes and helpers for the API tests. Nothing here needs a microphone or Whisper."""
 
 import asyncio
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -104,6 +105,12 @@ class FakeTranscriber:
     async def is_reachable(self) -> bool:
         return self.reachable
 
+    def is_loaded(self) -> bool:
+        return False
+
+    async def close(self) -> None:
+        return None
+
 
 @contextmanager
 def running_app(settings: Settings, **overrides: object) -> Iterator[TestClient]:
@@ -133,3 +140,11 @@ def record_once(client: TestClient) -> dict:
 
 def audio_files(settings: Settings) -> list[Path]:
     return sorted(settings.work_dir.glob("rec-*.wav"))
+
+
+def make_binary(directory: Path, name: str, source: str) -> str:
+    """Write an executable Python script that stands in for a system binary."""
+    script = directory / name
+    script.write_text(f"#!{sys.executable}\n{source}")
+    script.chmod(0o755)
+    return str(script)

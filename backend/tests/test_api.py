@@ -24,6 +24,7 @@ def test_health_reports_components_and_state(settings):
         "recorderAvailable": True,
         "transcriber": "fake-transcriber",
         "transcriberReachable": False,
+        "transcriberLoaded": False,
         "recording": "idle",
     }
 

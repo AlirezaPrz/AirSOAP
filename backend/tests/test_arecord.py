@@ -2,10 +2,10 @@
 handling (start, SIGINT, startup failure) is tested without a microphone."""
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
+from helpers import make_binary
 
 from airsoap.audio import inspect_wav, repair_wav_header
 from airsoap.recording import ArecordRecorder, RecorderError
@@ -39,13 +39,6 @@ import sys
 sys.stderr.write("arecord: main:850: audio open error: Device or resource busy\\n")
 sys.exit(1)
 """
-
-
-def make_binary(tmp_path: Path, name: str, source: str) -> str:
-    script = tmp_path / name
-    script.write_text(f"#!{sys.executable}\n{source}")
-    script.chmod(0o755)
-    return str(script)
 
 
 def test_command_is_an_argument_list_with_the_tested_format():
