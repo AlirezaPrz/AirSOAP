@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { AuthApi } from '../api/auth'
+import { Ambient } from '../components/Ambient'
 import { AccountSummary, MobileSignOut, type AccountInfo } from '../components/AccountSummary'
 import { Logo } from '../components/Logo'
 import { AccountsScreen } from './AccountsScreen'
@@ -61,7 +62,8 @@ function AdminReference() {
 
 function AdminShell({ account, children }: { account: AccountInfo; children: ReactNode }) {
   return (
-    <div className="min-h-dvh bg-ground text-ink">
+    <div className="relative isolate min-h-dvh text-ink">
+      <Ambient />
       <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto wash-soft px-5 py-7 lg:flex">
         <div className="px-3">
           <Logo subtitle="Administration" />

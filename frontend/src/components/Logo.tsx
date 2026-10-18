@@ -55,12 +55,15 @@ export function LogoMark({ title, ...props }: SVGProps<SVGSVGElement> & { title?
   )
 }
 
-/** The name as the logo sets it: "Air" in navy, "SOAP" in teal, heavy and tight. */
-export function LogoWordmark({ className = '' }: { className?: string }) {
+/**
+ * The name as the logo sets it: "Air" in navy, "SOAP" in teal, heavy and tight. Reversed, for a
+ * dark ground: "Air" in white and "SOAP" in a lighter teal that keeps its contrast.
+ */
+export function LogoWordmark({ className = '', reversed = false }: { className?: string; reversed?: boolean }) {
   return (
     <span className={`font-bold tracking-[-0.02em] ${className}`}>
-      <span className="text-brand-navy">Air</span>
-      <span className="text-brand-teal">SOAP</span>
+      <span className={reversed ? 'text-white' : 'text-brand-navy'}>Air</span>
+      <span className={reversed ? 'text-[#6fd6ca]' : 'text-brand-teal'}>SOAP</span>
     </span>
   )
 }

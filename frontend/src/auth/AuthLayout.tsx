@@ -1,6 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import logo from '../assets/airsoap-logo.webp'
-import { Logo } from '../components/Logo'
+import { LogoMark, LogoWordmark } from '../components/Logo'
 import { Showcase } from './Showcase'
 
 const FACTS: { title: string; body: string }[] = [
@@ -17,6 +16,16 @@ const FACTS: { title: string; body: string }[] = [
     body: 'After 30 minutes without activity you are signed out, and any open encounter is discarded.',
   },
 ]
+
+/** The reversed logo, for the navy corner of the wash. */
+function BrandMark({ size }: { size: 'sm' | 'lg' }) {
+  return (
+    <span className="flex shrink-0 items-center gap-3">
+      <LogoMark className={`${size === 'sm' ? 'h-8' : 'h-14'} w-auto`} />
+      <LogoWordmark reversed className={size === 'sm' ? 'text-[21px]' : 'text-[32px] leading-none'} />
+    </span>
+  )
+}
 
 // The form floats above the wash, so it is the one surface here with a shadow.
 const CARD_SHADOW = 'shadow-[0_24px_60px_-28px_rgb(9_48_75/0.45)]'
@@ -37,15 +46,27 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
   }, [title])
 
   return (
-    <div className="wash min-h-dvh text-ink">
+    <div className="wash-deep min-h-dvh text-ink">
       <div className="mx-auto grid min-h-dvh max-w-[1320px] gap-10 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)] lg:items-center lg:gap-16 lg:px-12 lg:py-12 xl:gap-24">
         <div className="hidden h-full max-h-[860px] min-h-[620px] flex-col gap-8 lg:flex">
-          <img src={logo} alt="AirSOAP" width={720} height={541} className="h-auto w-[148px] shrink-0" />
+          <div className="flex flex-col items-start gap-5 xl:flex-row xl:items-center xl:gap-10">
+            <BrandMark size="lg" />
+            <span aria-hidden className="hidden h-16 w-px shrink-0 bg-white/25 xl:block" />
+            <p className="max-w-[40ch] text-white">
+              <span className="block text-[19px] leading-snug font-semibold text-balance">
+                Stay with the patient. The notes can wait.
+              </span>
+              <span className="mt-1.5 block text-[15px] leading-relaxed text-[#d9e6ef]">
+                AirSOAP writes down the visit as you talk and drafts a SOAP note for you to check, on a small
+                computer in the room.
+              </span>
+            </p>
+          </div>
           <Showcase />
         </div>
 
         <header className="lg:hidden">
-          <Logo size="sm" />
+          <BrandMark size="sm" />
         </header>
 
         <main className="flex flex-col justify-center">

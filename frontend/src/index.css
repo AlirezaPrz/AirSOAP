@@ -217,3 +217,54 @@ button:not(:disabled):active {
     radial-gradient(80% 40% at 100% 100%, #f3eee2 0%, rgb(243 238 226 / 0) 75%),
     linear-gradient(170deg, #e2eaef 0%, #e6ecef 55%, #ebece8 100%);
 }
+
+/*
+ * The sign-in wash, deepened to navy behind the brand at the top left so white text reads on it.
+ * The navy is placed from the centre of the page, so it stays behind the left column at any width.
+ */
+.wash-deep {
+  background-color: #d6e1e7;
+  background-image:
+    radial-gradient(1300px 640px at calc(50% - 400px) 0%, #173f5c 0%, rgb(23 63 92 / 0.95) 38%, rgb(23 63 92 / 0) 88%),
+    radial-gradient(45% 55% at 100% 42%, #f7efdd 0%, rgb(247 239 221 / 0) 75%),
+    radial-gradient(70% 60% at 0% 100%, #b4c7d4 0%, rgb(180 199 212 / 0) 70%),
+    radial-gradient(55% 60% at 100% 100%, #a6c6d3 0%, rgb(166 198 211 / 0) 72%),
+    linear-gradient(135deg, #a9c4d6 0%, #d8e1e5 48%, #eceae2 100%);
+}
+
+/*
+ * The workspace ground: a faint sky glow at the top right, a cream glow at the bottom left, and
+ * lines of air moving slowly along the bottom, like the waveform in the logo. Faster while
+ * recording. The lines drift one tile to the left and repeat, so the loop has no seam.
+ */
+.ambient {
+  background-color: var(--color-ground);
+  background-image:
+    radial-gradient(60% 50% at 100% 0%, #e2ecf3 0%, rgb(226 236 243 / 0) 75%),
+    radial-gradient(55% 45% at 0% 100%, #f2efe6 0%, rgb(242 239 230 / 0) 75%);
+}
+
+.ambient-waves {
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 55%);
+}
+
+.ambient-waves > svg {
+  animation: drift 90s linear infinite;
+  will-change: transform;
+}
+
+.ambient[data-active] .ambient-waves > svg {
+  animation-duration: 36s;
+}
+
+@keyframes drift {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-waves > svg {
+    animation: none;
+  }
+}

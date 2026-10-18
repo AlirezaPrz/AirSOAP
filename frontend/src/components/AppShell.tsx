@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { ENCOUNTER_TYPE_LABELS, formatDate } from '../lib/format'
 import { calculateAge } from '../workflow/privacy'
 import type { Encounter, WorkflowStatus } from '../workflow/reducer'
+import { Ambient } from './Ambient'
 import { AccountSummary, MobileSignOut, type AccountInfo } from './AccountSummary'
 import { CheckIcon } from './icons'
 import { Logo } from './Logo'
@@ -130,7 +131,8 @@ interface AppShellProps {
 export function AppShell({ status, encounter, account, children }: AppShellProps) {
   const current = STEP_INDEX[status]
   return (
-    <div className="min-h-dvh bg-ground text-ink">
+    <div className="relative isolate min-h-dvh text-ink">
+      <Ambient active={status === 'recording'} />
       <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto wash-soft px-5 py-7 lg:flex">
         <div className="px-3">
           <Logo subtitle="Clinical workspace" />
