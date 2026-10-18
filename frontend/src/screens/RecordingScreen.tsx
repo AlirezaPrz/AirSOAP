@@ -110,7 +110,7 @@ export function RecordingScreen({
       />
 
       <Panel className="grid grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex min-w-0 flex-col p-6 sm:p-10">
+        <div className="flex min-w-0 flex-col items-center p-6 text-center sm:p-10">
           <p className={`flex items-center gap-2 text-[15px] font-medium ${recording ? 'text-danger' : 'text-ink-3'}`}>
             <span aria-hidden className="relative flex size-2.5">
               {recording && <span className="absolute inset-0 animate-ping rounded-full bg-danger/60" />}
@@ -129,11 +129,11 @@ export function RecordingScreen({
           </p>
 
           {/* The trace fills the room the guidance leaves, across the whole width of the panel. */}
-          <div className="mt-8 h-20 lg:h-auto lg:min-h-24 lg:flex-1">
+          <div className="mt-8 h-20 w-full lg:h-auto lg:min-h-24 lg:flex-1">
             <LevelMeter active={recording} />
           </div>
 
-          <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-center">
+          <div className="mt-8 flex w-full flex-col items-center gap-5 sm:flex-row sm:flex-wrap sm:justify-center">
             {recording ? (
               <Button
                 variant="danger"
@@ -155,7 +155,7 @@ export function RecordingScreen({
                   {!pending && <MicIcon className="size-4" />}
                   Start recording
                 </Button>
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-3 text-left">
                   <input
                     id={consentId}
                     type="checkbox"
@@ -172,7 +172,7 @@ export function RecordingScreen({
           </div>
 
           {error && (
-            <div className="mt-6">
+            <div className="mt-6 w-full text-left">
               <Alert tone="error">{error}</Alert>
             </div>
           )}

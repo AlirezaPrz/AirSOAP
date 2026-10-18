@@ -120,7 +120,7 @@ export function ClinicalReviewPanel({
             <h2
               id={CLINICAL_REVIEW_HEADING}
               tabIndex={-1}
-              className="scroll-mt-56 text-lg font-semibold focus:outline-none"
+              className="scroll-mt-56 lg:scroll-mt-4 text-lg font-semibold focus:outline-none"
             >
               Clinical review
             </h2>

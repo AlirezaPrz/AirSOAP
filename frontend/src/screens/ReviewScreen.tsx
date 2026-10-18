@@ -287,7 +287,7 @@ export function ReviewScreen({
     },
   ]
 
-  // The transcript stays in view beside the note, just under the sticky steps bar.
+  // On a wide screen the two columns fill the window below the steps bar, so the page itself never scrolls.
   const headerRef = useRef<HTMLDivElement>(null)
   const [headerHeight, setHeaderHeight] = useState(0)
   useLayoutEffect(() => {
@@ -331,27 +331,14 @@ export function ReviewScreen({
         <ReviewProgress steps={steps} />
       </div>
 
-      {(hasContent || missing.length < 4) && (
-        <div className="mb-6 space-y-3">
-          <Alert tone="warning" title="AI-generated draft">
-            Check every section against the visit before submitting. The draft may contain errors or omissions.
-          </Alert>
-          {hasContent && missing.length > 0 && (
-            <p className="text-[15px] font-medium text-danger" role="status">
-              Complete all four sections to submit.
-            </p>
-          )}
-        </div>
-      )}
-
       <div
-        className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
-        style={{ '--review-top': `${headerHeight + 8}px` } as CSSProperties}
+        className="grid items-start gap-6 lg:h-(--panes) lg:min-h-[420px] lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-stretch"
+        style={{ '--panes': `calc(100dvh - ${headerHeight}px - 48px)` } as CSSProperties}
       >
-        {/* On a wide screen the transcript scrolls inside its own panel, so a long visit never pushes the note away. */}
-        <Panel className="lg:sticky lg:top-(--review-top) lg:max-h-[calc(100dvh-var(--review-top)-24px)] lg:overflow-y-auto lg:overscroll-contain">
+        {/* On a wide screen the page holds still and each column scrolls on its own: transcript left, note right. */}
+        <Panel className="lg:relative lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
           <div className="flex items-baseline justify-between gap-4 bg-surface px-6 pt-6 sm:px-8 sm:pt-7 lg:sticky lg:top-0 lg:z-[1] lg:pb-3">
-            <h2 id={`${id}-transcript`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
+            <h2 id={`${id}-transcript`} tabIndex={-1} className="scroll-mt-56 lg:scroll-mt-4 text-lg font-semibold focus:outline-none">
               Transcript
             </h2>
             <p className="text-sm text-ink-3 tabular-nums">
@@ -434,10 +421,23 @@ export function ReviewScreen({
           </ol>
         </Panel>
 
-        <div className="min-w-0 space-y-6">
+        {/* The note, the review and the warnings scroll together as one pane beside the transcript. */}
+        <div className="min-w-0 space-y-6 lg:relative lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+          {(hasContent || missing.length < 4) && (
+            <div className="space-y-3">
+              <Alert tone="warning" title="AI-generated draft">
+                Check every section against the visit before submitting. The draft may contain errors or omissions.
+              </Alert>
+              {hasContent && missing.length > 0 && (
+                <p className="text-[15px] font-medium text-danger" role="status">
+                  Complete all four sections to submit.
+                </p>
+              )}
+            </div>
+          )}
           <Panel className="px-6 py-6 sm:px-8 sm:py-7">
             <div className="flex items-center justify-between gap-4">
-              <h2 id={`${id}-soap`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
+              <h2 id={`${id}-soap`} tabIndex={-1} className="scroll-mt-56 lg:scroll-mt-4 text-lg font-semibold focus:outline-none">
                 SOAP note
               </h2>
               {hasContent && !generating && (
