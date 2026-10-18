@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import consultation from '../assets/photos/consultation-notes.webp'
-import device from '../assets/photos/device-board.webp'
+import consultation from '../assets/photos/consultation-tablet.webp'
+import device from '../assets/photos/raspberry-pi-5.webp'
 import stethoscope from '../assets/photos/stethoscope-desk.webp'
 
 interface Slide {
@@ -10,22 +10,25 @@ interface Slide {
   body: string
   /** How the photo sits in its frame. */
   position: string
+  /** 'contain' shows the whole picture (for a product shot on white); default fills the frame. */
+  fit?: 'cover' | 'contain'
 }
 
 const SLIDES: Slide[] = [
   {
     image: consultation,
-    alt: 'A doctor in a white coat with a stethoscope writes notes on a clipboard across the desk from a patient.',
+    alt: 'A doctor in a white coat holds a pen and a tablet while talking with a patient, whose clasped hands are in the foreground.',
     title: 'Look at the patient, not the keyboard.',
     body: 'AirSOAP records the conversation, so you can listen and examine while it keeps track.',
-    position: '50% 62%',
+    position: '45% 40%',
   },
   {
     image: device,
-    alt: 'A green Raspberry Pi circuit board with several compute modules plugged in.',
+    alt: 'A Raspberry Pi 5 single-board computer seen from above at an angle.',
     title: 'Everything stays in the room.',
     body: 'Transcription and note drafting run on a small computer on the desk. Nothing goes to the cloud.',
-    position: '50% 55%',
+    position: '50% 50%',
+    fit: 'contain',
   },
   {
     image: stethoscope,
@@ -71,7 +74,7 @@ export function Showcase() {
       onFocus={() => setHovering(true)}
       onBlur={() => setHovering(false)}
     >
-      <div className="relative min-h-[240px] flex-1 overflow-hidden rounded-(--radius-panel) bg-ink">
+      <div className="relative min-h-[240px] flex-1 overflow-hidden rounded-(--radius-panel) bg-white">
         {SLIDES.map((s, i) => (
           <img
             key={s.title}
@@ -79,7 +82,7 @@ export function Showcase() {
             alt={i === index ? s.alt : ''}
             aria-hidden={i !== index}
             decoding="async"
-            className={`absolute inset-0 size-full object-cover transition-[opacity,transform] duration-[1200ms] ease-(--ease-out-expo) ${
+            className={`absolute inset-0 size-full ${s.fit === 'contain' ? 'object-contain' : 'object-cover'} transition-[opacity,transform] duration-[1200ms] ease-(--ease-out-expo) ${
               i === index ? 'scale-100 opacity-100' : 'scale-[1.04] opacity-0'
             }`}
             style={{ objectPosition: s.position }}
