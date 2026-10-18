@@ -23,8 +23,8 @@ from .base import AiClient
 from .errors import AiError
 from .gate import ModelGate
 from .runner import run_task
-from .schemas import ClinicalReviewRequest, SoapRequest
-from .tasks import clinical_review, soap
+from .schemas import ClinicalReviewRequest, SoapRequest, SpeakerRequest
+from .tasks import clinical_review, soap, speakers
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ UNEXPECTED = JobError("AI_FAILED", "The AI task failed unexpectedly.")
 class AiJobKind(StrEnum):
     SOAP = "soap"
     CLINICAL_REVIEW = "clinical-review"
+    SPEAKERS = "speakers"
 
 
 @dataclass
@@ -88,7 +89,10 @@ class AiJobManager:
         self._jobs.clear()
 
     def submit(
-        self, kind: AiJobKind, request: SoapRequest | ClinicalReviewRequest, owner_id: str | None = None
+        self,
+        kind: AiJobKind,
+        request: SoapRequest | ClinicalReviewRequest | SpeakerRequest,
+        owner_id: str | None = None,
     ) -> AiJob:
         if self._queue is None:
             raise RuntimeError("AiJobManager.start() was not called")
@@ -180,6 +184,19 @@ class AiJobManager:
             )
 
     async def _execute(self, job: AiJob) -> tuple[BaseModel, Any]:
+        if job.kind is AiJobKind.SPEAKERS:
+            # Long visits are labelled in batches, one request after another.
+            parts, completion = [], None
+            for batch in speakers.batches(job.request):
+                part, completion = await run_task(
+                    self._client,
+                    speakers.task_for(batch),
+                    batch,
+                    speakers.parse,
+                    max_attempts=self._max_attempts,
+                )
+                parts.append(part)
+            return speakers.combine(parts), completion
         if job.kind is AiJobKind.SOAP:
             return await run_task(
                 self._client, soap.TASK, job.request, soap.parse, max_attempts=self._max_attempts

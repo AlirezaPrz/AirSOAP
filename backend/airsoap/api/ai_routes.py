@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Request, Response, status
 
 from ..ai.jobs import AiJob, AiJobKind
-from ..ai.schemas import ClinicalReviewRequest, SoapRequest
+from ..ai.schemas import ClinicalReviewRequest, SoapRequest, SpeakerRequest
 from ..auth.csrf import require_same_origin
 from ..auth.deps import ClinicianDep, require_clinician
 from ..errors import ApiError
@@ -46,6 +46,14 @@ async def start_clinical_review(
 ) -> AiJobAccepted:
     """Review the clinician's edited note. Returns suggestions only; the note is never changed."""
     return _accepted(services.ai_jobs.submit(AiJobKind.CLINICAL_REVIEW, body, owner_id=user.user.id))
+
+
+@router.post("/speakers", status_code=status.HTTP_202_ACCEPTED)
+async def start_speaker_suggestions(
+    body: SpeakerRequest, user: ClinicianDep, services: ServicesDep
+) -> AiJobAccepted:
+    """Suggest who said each turn, from the words only. The transcript itself is never changed."""
+    return _accepted(services.ai_jobs.submit(AiJobKind.SPEAKERS, body, owner_id=user.user.id))
 
 
 @router.get("/jobs/{job_id}")

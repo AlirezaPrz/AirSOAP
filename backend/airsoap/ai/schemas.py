@@ -78,6 +78,34 @@ class ClinicalReviewRequest(CamelModel):
         return self
 
 
+class SpeakerSegment(CamelModel):
+    """One transcript turn to label: its ID and its words (identifiers removed by the browser)."""
+
+    id: SegmentId
+    text: Annotated[str, Field(min_length=1, max_length=4_000)]
+
+
+class SpeakerRequest(CamelModel):
+    segments: Annotated[list[SpeakerSegment], Field(min_length=1, max_length=MAX_SEGMENTS)]
+
+    @model_validator(mode="after")
+    def _within_size_limit(self) -> "SpeakerRequest":
+        if sum(len(segment.text) for segment in self.segments) > MAX_TRANSCRIPT_CHARS:
+            raise ValueError("transcript too long")
+        return self
+
+
+class SpeakerSuggestion(CamelModel):
+    id: str
+    speaker: Speaker
+
+
+class SpeakerResult(CamelModel):
+    """One suggestion per requested turn, in order. The words are never returned or changed."""
+
+    suggestions: list[SpeakerSuggestion]
+
+
 # --- SOAP result -----------------------------------------------------------------
 
 

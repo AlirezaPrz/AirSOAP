@@ -37,6 +37,7 @@ ROUTE_ACCESS: dict[tuple[str, str], str] = {
     ("POST", "/api/transcriptions/{job_id}/cancel"): CLINICIAN,
     ("POST", "/api/ai/soap"): CLINICIAN,
     ("POST", "/api/ai/clinical-review"): CLINICIAN,
+    ("POST", "/api/ai/speakers"): CLINICIAN,
     ("GET", "/api/ai/jobs/{job_id}"): CLINICIAN,
     ("POST", "/api/ai/jobs/{job_id}/cancel"): CLINICIAN,
     ("DELETE", "/api/ai/jobs/{job_id}"): CLINICIAN,
