@@ -47,7 +47,7 @@ const soapResponse = (overrides: Partial<SoapGenerationResponse> = {}): SoapGene
 
 const suggestion = (id: string, description: string, extra = {}) => ({
   id,
-  category: 'follow_up_question' as const,
+  category: 'information_gap' as const,
   description,
   rationale: `Why: ${description}`,
   uncertainty: 'medium' as const,
@@ -55,18 +55,21 @@ const suggestion = (id: string, description: string, extra = {}) => ({
   ...extra,
 })
 const REVIEW: ClinicalReview = {
-  informationGaps: [],
-  followUpQuestions: [suggestion('sug-a', 'Has the fever persisted?'), suggestion('sug-b', 'Any travel recently?')],
-  differentialConsiderations: [
-    suggestion('sug-c', 'Viral pharyngitis', {
-      category: 'differential_consideration',
-      missingInformation: 'No test result is documented.',
+  informationGaps: [
+    suggestion('sug-a', 'Has the fever persisted?', {
+      gapType: 'asked_not_answered',
+      suggestedQuestion: 'Is the fever still there today?',
     }),
+    suggestion('sug-b', 'Any travel recently?'),
   ],
   documentationInconsistencies: [
     suggestion('sug-d', 'Plan wording differs from the conversation', {
       category: 'documentation_inconsistency',
-      evidence: [{ source: 'note', quote: 'AI plan text.', field: 'plan' }],
+      inconsistencyKind: 'plan',
+      evidence: [
+        { source: 'transcript', quote: 'I felt feverish last night', segmentId: 'seg-4' },
+        { source: 'note', quote: 'AI plan text.', field: 'plan' },
+      ],
     }),
   ],
   omittedUnverified: 2,
@@ -298,16 +301,19 @@ describe('Clinical Review', () => {
     await waitFor(() => expect(reviewCalls).toHaveLength(1))
     await act(async () => reviewCalls[0].result.resolve(reviewResponse()))
 
-    expect(await screen.findByRole('heading', { level: 3, name: 'Follow-up questions' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 3, name: 'Information gaps' })).toBeInTheDocument()
     expect(screen.getByText('Has the fever persisted?')).toBeInTheDocument()
-    expect(screen.getByText('Viral pharyngitis')).toBeInTheDocument()
-    expect(screen.getByText(/No test result is documented/)).toBeInTheDocument()
+    expect(screen.getByText('Is the fever still there today?')).toBeInTheDocument() // the question folded into the gap
+    expect(screen.getByText(/Asked, but not clearly answered · Uncertainty: Medium/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'Documentation inconsistencies' })).toBeInTheDocument()
+    expect(screen.getByText('Said')).toBeInTheDocument() // both sides of the inconsistency
+    expect(screen.getByText('Written')).toBeInTheDocument()
+    expect(screen.getByText(/Plan · Uncertainty: Medium/)).toBeInTheDocument()
     expect(screen.getAllByText(/Transcript, turn 4/).length).toBeGreaterThan(0) // linked to the real turn
     expect(screen.getByText(/Note, Plan/)).toBeInTheDocument()
     expect(screen.getByText('AI-generated suggestions')).toBeInTheDocument()
     expect(screen.getByText(/2 suggestions were left out/)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 3, name: 'Information gaps' })).toBeInTheDocument()
-    expect(screen.getByText('No information gaps were suggested.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 3, name: 'Follow-up questions' })).not.toBeInTheDocument()
 
     const after = ['Subjective', 'Objective', 'Assessment', 'Plan'].map((name) => (textbox(name) as HTMLTextAreaElement).value)
     expect(after).toEqual(before) // nothing was added to the note
@@ -440,7 +446,7 @@ describe('leaving the encounter while the AI is working', () => {
     await reachReview(user)
     expect(textbox('Plan')).toHaveValue('')
     expect(screen.getAllByRole('combobox', { name: /speaker for segment/i })[0]).toHaveDisplayValue('Unknown')
-    expect(screen.queryByRole('heading', { level: 3, name: 'Follow-up questions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 3, name: 'Information gaps' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Run Clinical Review' })).toBeDisabled()
   })
 })

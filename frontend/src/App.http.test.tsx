@@ -74,18 +74,18 @@ function backendFetch() {
           status: 'completed',
           soapResult: null,
           reviewResult: {
-            informationGaps: [],
-            followUpQuestions: [
+            informationGaps: [
               {
                 id: 'sug-1',
-                category: 'follow_up_question',
-                description: 'How long has the sore throat lasted?',
+                category: 'information_gap',
+                description: 'How long the sore throat has lasted is not found in the transcript.',
                 rationale: 'Duration helps to narrow the cause.',
                 uncertainty: 'medium',
                 evidence: [{ source: 'transcript', quote: 'A sore throat.', segmentId: 'seg-2' }],
+                gapType: 'not_asked',
+                suggestedQuestion: 'How long has the sore throat lasted?',
               },
             ],
-            differentialConsiderations: [],
             documentationInconsistencies: [],
             omittedUnverified: 0,
           },

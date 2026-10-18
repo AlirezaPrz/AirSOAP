@@ -25,15 +25,13 @@ const submission: DemoSubmitResponse = {
 }
 const emptyReview = (overrides: Partial<ClinicalReview> = {}): ClinicalReview => ({
   informationGaps: [],
-  followUpQuestions: [],
-  differentialConsiderations: [],
   documentationInconsistencies: [],
   omittedUnverified: 0,
   ...overrides,
 })
 const suggestion = (id: string) => ({
   id,
-  category: 'follow_up_question' as const,
+  category: 'information_gap' as const,
   description: `Question ${id}?`,
   rationale: 'Because.',
   uncertainty: 'low' as const,
@@ -282,10 +280,10 @@ describe('workflowReducer — clinical review', () => {
 
   it('stores the suggestions without touching the note or the transcript', () => {
     const before = draftOf(run(toDrafted))
-    const state = run(reviewed(emptyReview({ followUpQuestions: [suggestion('a')] })))
+    const state = run(reviewed(emptyReview({ informationGaps: [suggestion('a')] })))
     const draft = draftOf(state)
     expect(draft.review.status).toBe('ready')
-    expect(draft.review.result?.review.followUpQuestions).toHaveLength(1)
+    expect(draft.review.result?.review.informationGaps).toHaveLength(1)
     expect(draft.soap).toEqual(before.soap)
     expect(draft.transcript).toEqual(before.transcript)
     expect(draft.version).toBe(before.version)
@@ -308,7 +306,7 @@ describe('workflowReducer — clinical review', () => {
   })
 
   it('keeps dismissed suggestions dismissed, including after a rerun', () => {
-    const dismissed = run([{ type: 'REVIEW_DISMISSED', suggestionId: 'a' }], run(reviewed(emptyReview({ followUpQuestions: [suggestion('a'), suggestion('b')] }))))
+    const dismissed = run([{ type: 'REVIEW_DISMISSED', suggestionId: 'a' }], run(reviewed(emptyReview({ informationGaps: [suggestion('a'), suggestion('b')] }))))
     expect(draftOf(dismissed).review.dismissed).toEqual(['a'])
     // Dismissing twice changes nothing.
     expect(workflowReducer(dismissed, { type: 'REVIEW_DISMISSED', suggestionId: 'a' })).toBe(dismissed)
@@ -320,7 +318,7 @@ describe('workflowReducer — clinical review', () => {
         {
           type: 'REVIEW_SUCCEEDED',
           requestId: 2,
-          review: emptyReview({ followUpQuestions: [suggestion('a'), suggestion('b')] }), // the same stable IDs
+          review: emptyReview({ informationGaps: [suggestion('a'), suggestion('b')] }), // the same stable IDs
           basedOnVersion: 99,
         },
       ],
@@ -331,7 +329,7 @@ describe('workflowReducer — clinical review', () => {
   })
 
   it('keeps the last result while a rerun is running and when it fails', () => {
-    const ready = run(reviewed(emptyReview({ followUpQuestions: [suggestion('a')] })))
+    const ready = run(reviewed(emptyReview({ informationGaps: [suggestion('a')] })))
     const rerunning = workflowReducer(ready, { type: 'REVIEW_REQUESTED', requestId: 2 })
     expect(draftOf(rerunning).review).toMatchObject({ status: 'running' })
     expect(draftOf(rerunning).review.result).not.toBeNull()
@@ -370,7 +368,7 @@ describe('workflowReducer — clinical review', () => {
   })
 
   it('clears every AI input and output when the encounter is cancelled', () => {
-    const state = run([...reviewed(emptyReview({ followUpQuestions: [suggestion('a')] })), { type: 'CANCEL_ENCOUNTER' }])
+    const state = run([...reviewed(emptyReview({ informationGaps: [suggestion('a')] })), { type: 'CANCEL_ENCOUNTER' }])
     expect(state).toEqual({ status: 'idle' })
   })
 })

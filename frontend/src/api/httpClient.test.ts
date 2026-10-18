@@ -219,8 +219,6 @@ describe('createHttpApi', () => {
     it('sends the speaker labels and the edited note to the clinical review', async () => {
       const review = {
         informationGaps: [],
-        followUpQuestions: [],
-        differentialConsiderations: [],
         documentationInconsistencies: [],
         omittedUnverified: 2,
       }

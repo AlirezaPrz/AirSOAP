@@ -104,41 +104,29 @@ export function createMockReview({ segments, soap }: ClinicalReviewRequest): Cli
     informationGaps: [
       make(
         'information_gap',
-        'The transcript does not say how the symptoms have changed since they began.',
+        'How the symptoms have changed since they began is not found in the transcript.',
         'Progression helps to judge urgency.',
         patientLine,
-        { gapType: 'uncertain' },
+        { gapType: 'not_asked', suggestedQuestion: 'Has anything made the symptoms better or worse since they began?' },
       ),
     ],
-    followUpQuestions: [
-      make(
-        'follow_up_question',
-        'Has anything made the symptoms better or worse?',
-        'The patient described the symptoms, but relieving and aggravating factors were not discussed.',
-        patientLine,
-      ),
-    ],
-    differentialConsiderations: [
-      make(
-        'differential_consideration',
-        'A viral cause, alongside the condition in your assessment',
-        'The documented symptoms are not specific to one cause.',
-        clinicianLine,
-        { missingInformation: 'Test results and exposure history are not documented.' },
-      ),
-    ],
-    documentationInconsistencies: planQuote
-      ? [
-          {
-            id: stableId('documentation_inconsistency', 'The plan could be checked against the conversation.'),
-            category: 'documentation_inconsistency',
-            description: 'The plan could be checked against the conversation.',
-            rationale: 'Confirm that each item in the plan was discussed. (Mock output; no AI model was used.)',
-            uncertainty: 'low',
-            evidence: [{ source: 'note', quote: planQuote, field: 'plan' }],
-          },
-        ]
-      : [],
+    documentationInconsistencies:
+      planQuote && clinicianLine
+        ? [
+            {
+              id: stableId('documentation_inconsistency', 'Check that the plan matches what was discussed.'),
+              category: 'documentation_inconsistency',
+              description: 'Check that the plan matches what was discussed.',
+              rationale: 'Each item in the plan should come from the conversation. (Mock output; no AI model was used.)',
+              uncertainty: 'low',
+              inconsistencyKind: 'plan',
+              evidence: [
+                { source: 'transcript', quote: firstWords(clinicianLine.text), segmentId: clinicianLine.id },
+                { source: 'note', quote: planQuote, field: 'plan' },
+              ],
+            },
+          ]
+        : [],
     omittedUnverified: 0,
   }
 }

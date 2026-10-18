@@ -238,7 +238,7 @@ export function ReviewScreen({
   const reviewResult = review.result
   const reviewFresh = reviewResult !== null && reviewResult.basedOnVersion === version
   const suggestionCount = reviewResult
-    ? (['informationGaps', 'followUpQuestions', 'differentialConsiderations', 'documentationInconsistencies'] as const)
+    ? (['informationGaps', 'documentationInconsistencies'] as const)
         .flatMap((key) => reviewResult.review[key])
         .filter((suggestion) => !review.dismissed.includes(suggestion.id)).length
     : 0

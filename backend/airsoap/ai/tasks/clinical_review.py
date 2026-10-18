@@ -1,10 +1,16 @@
 """Task: optional clinical review of the clinician's edited note against the labelled transcript.
 
-The model only *suggests*. This module then checks every suggestion against the
-text it was given: each one must quote evidence that really appears in the
-transcript or the note, otherwise it is dropped. Suggestions that advise
-starting, stopping or changing a treatment are dropped too. Nothing here ever
-edits the note.
+Two documentation checks, both of which can be verified against the text:
+
+- information gaps: relevant details absent or unclear in the transcript or the note, each with
+  an optional question the clinician could ask;
+- documentation inconsistencies: places where the note says something different from what was
+  said, each quoting both sides.
+
+The model only *suggests*. This module then checks every suggestion against the text it was
+given: each quote must really appear where the model says it does, and an "inconsistency" whose
+written side was in fact said is dropped, because nothing differs. Suggestions that advise
+starting, stopping or changing a treatment are dropped too. Nothing here ever edits the note.
 """
 
 import hashlib
@@ -29,19 +35,29 @@ MAX_PER_CATEGORY = 5
 MIN_QUOTE_CHARS = 3
 
 SYSTEM_PROMPT = """\
-You assist a clinician who has already reviewed a visit. You receive the visit transcript (speaker tags [Clinician], [Patient], [Unknown] were set or corrected by the clinician) and the clinician's own edited SOAP note. Return suggestions for the clinician to consider. You do not diagnose, prescribe or change the note.
+You check the documentation of a visit that a clinician has already reviewed. You receive the visit transcript (speaker tags [Clinician], [Patient], [Unknown] were set or corrected by the clinician) and the clinician's own edited SOAP note. You do two jobs and nothing else. You do not diagnose, prescribe or change the note.
 
-Rules:
-- Every suggestion needs evidence: short quotes copied word for word from the transcript or from the note. Set "source" to "transcript" or "note". If you cannot quote supporting text, do not make the suggestion.
-- The transcript may be incomplete. Never state that the clinician missed something; say "not found in the transcript".
-- informationGaps: relevant details that are absent or unclear. gapType is one of not_asked, asked_not_answered, omitted_from_note, uncertain.
-- followUpQuestions: specific questions tied to this case. The rationale says why the question may help.
-- differentialConsiderations: only when the documented symptoms, history or findings reasonably support it. Name the consideration, quote the supporting evidence, and in missingInformation say what is missing or what points against it. These are not diagnoses. If nothing is supported, return an empty list.
-- documentationInconsistencies: differences between the transcript and the note, such as changed units or numbers, a missing negation, or a plan that does not match the conversation. Quote both sides when you can.
+Job 1, informationGaps: details relevant to the reason for the visit that are absent or unclear.
+- gapType: not_asked (no question or statement about it in the transcript), asked_not_answered (asked, but the answer is missing or unclear), omitted_from_note (said in the transcript but missing from the note), uncertain.
+- evidence: short quotes copied word for word from the transcript or the note that show where the gap is, for example the complaint it relates to or the unanswered question.
+- suggestedQuestion: one short question the clinician could ask to close the gap, or "" when a question does not fit (for example omitted_from_note).
+- Never state that the clinician missed something; the transcript may be incomplete. Say "not found in the transcript".
+- No generic checklists: only gaps that matter for this visit.
+
+Job 2, documentationInconsistencies: places where the note says something different from what was said.
+- kind: number_or_unit (a value, unit or time differs), negation (a "no" or "denies" is lost or added), laterality (left and right differ), medication (name, dose or frequency differs), plan (the plan does not match the conversation), other.
+- transcriptQuote: the words as said, copied word for word from the transcript. noteQuote: the words as written, copied word for word from the note.
+- Only report real differences. If the note matches what was said, it is not an inconsistency: leave it out. An empty list is the correct answer when nothing differs.
+- Example of a real inconsistency: transcriptQuote "take ibuprofen 400 milligrams", noteQuote "Ibuprofen 200 mg", kind medication.
+- Example of NOT an inconsistency: transcriptQuote "take ibuprofen 400 milligrams", noteQuote "Ibuprofen 400 mg". Leave it out.
+
+Rules for both:
+- Every quote must be copied exactly from the text, word for word. If you cannot quote it, leave the suggestion out.
 - Never recommend starting, stopping or changing any treatment or medication.
-- uncertainty is low, medium or high. Empty lists are fine. At most 5 items per list. Be concise.
+- uncertainty is low, medium or high: how unsure you are about the suggestion.
+- At most 5 items per list. Empty lists are fine. Be concise.
 
-Answer with JSON containing exactly these keys: informationGaps, followUpQuestions, differentialConsiderations, documentationInconsistencies.\
+Answer with JSON containing exactly these keys: informationGaps, documentationInconsistencies.\
 """
 
 
@@ -64,18 +80,26 @@ class RawItem(BaseModel):
 
 class RawGap(RawItem):
     gapType: Literal["not_asked", "asked_not_answered", "omitted_from_note", "uncertain"]  # noqa: N815
+    suggestedQuestion: str  # noqa: N815  (may be empty)
 
 
-class RawDifferential(RawItem):
-    missingInformation: str  # noqa: N815
+InconsistencyKind = Literal["number_or_unit", "negation", "laterality", "medication", "plan", "other"]
+
+
+class RawInconsistency(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    description: str
+    rationale: str
+    uncertainty: Literal["low", "medium", "high"]
+    kind: InconsistencyKind
+    transcriptQuote: str  # noqa: N815
+    noteQuote: str  # noqa: N815
 
 
 class RawReview(BaseModel):
     model_config = ConfigDict(extra="ignore")
     informationGaps: list[RawGap]  # noqa: N815
-    followUpQuestions: list[RawItem]  # noqa: N815
-    differentialConsiderations: list[RawDifferential]  # noqa: N815
-    documentationInconsistencies: list[RawItem]  # noqa: N815
+    documentationInconsistencies: list[RawInconsistency]  # noqa: N815
 
 
 # --- prompt --------------------------------------------------------------------------
@@ -142,6 +166,11 @@ class _Sources:
                 return EvidenceOut(source="note", quote=quote.strip(), field=name)
         return EvidenceOut(source="note", quote=quote.strip()) if needle in self.joined_note else None
 
+    def was_said(self, quote: str) -> bool:
+        """True when these words appear in the transcript as they are."""
+        needle = normalize(quote)
+        return len(needle) >= MIN_QUOTE_CHARS and needle in self.joined_transcript
+
 
 def _suggestion_id(category: str, description: str) -> str:
     digest = hashlib.sha256(f"{category}|{normalize(description)}".encode()).hexdigest()
@@ -153,12 +182,21 @@ class _Verifier:
         self._sources = sources
         self.omitted = 0
 
-    def convert(self, category: str, items: list[Any]) -> list[SuggestionOut]:
+    def _keep(self, category: str, description: str, seen: set[str]) -> str | None:
+        """The suggestion's stable ID, or None for a duplicate."""
+        suggestion_id = _suggestion_id(category, description)
+        if suggestion_id in seen:
+            return None
+        seen.add(suggestion_id)
+        return suggestion_id
+
+    def gaps(self, items: list[RawGap]) -> list[SuggestionOut]:
         out: list[SuggestionOut] = []
         seen: set[str] = set()
         for item in items:
             description = item.description.strip()
             rationale = item.rationale.strip()
+            question = item.suggestedQuestion.strip()
             evidence = [
                 verified
                 for raw in item.evidence
@@ -167,22 +205,53 @@ class _Verifier:
             if not description or not evidence or _advises_treatment(description, rationale):
                 self.omitted += 1
                 continue
-            suggestion_id = _suggestion_id(category, description)
-            if suggestion_id in seen:
+            if (suggestion_id := self._keep("information_gap", description, seen)) is None:
                 continue
-            seen.add(suggestion_id)
             out.append(
                 SuggestionOut(
                     id=suggestion_id,
-                    category=category,  # type: ignore[arg-type]
+                    category="information_gap",
                     description=description,
                     rationale=rationale,
                     uncertainty=item.uncertainty,
                     evidence=evidence,
-                    gap_type=getattr(item, "gapType", None),
-                    missing_information=(getattr(item, "missingInformation", "").strip() or None)
-                    if hasattr(item, "missingInformation")
-                    else None,
+                    gap_type=item.gapType,
+                    # A question is never treatment advice, but one that is not a question is dropped.
+                    suggested_question=question if question.endswith("?") else None,
+                )
+            )
+        return out[:MAX_PER_CATEGORY]
+
+    def inconsistencies(self, items: list[RawInconsistency]) -> list[SuggestionOut]:
+        out: list[SuggestionOut] = []
+        seen: set[str] = set()
+        for item in items:
+            description = item.description.strip()
+            rationale = item.rationale.strip()
+            said = self._sources.verify("transcript", item.transcriptQuote)
+            written = self._sources.verify("note", item.noteQuote)
+            if (
+                not description
+                or said is None
+                or written is None
+                # The written words were said as they are: nothing differs.
+                or self._sources.was_said(item.noteQuote)
+                or normalize(item.noteQuote) == normalize(item.transcriptQuote)
+                or _advises_treatment(description, rationale)
+            ):
+                self.omitted += 1
+                continue
+            if (suggestion_id := self._keep("documentation_inconsistency", description, seen)) is None:
+                continue
+            out.append(
+                SuggestionOut(
+                    id=suggestion_id,
+                    category="documentation_inconsistency",
+                    description=description,
+                    rationale=rationale,
+                    uncertainty=item.uncertainty,
+                    evidence=[said, written],
+                    inconsistency_kind=item.kind,
                 )
             )
         return out[:MAX_PER_CATEGORY]
@@ -195,14 +264,8 @@ def parse(request: ClinicalReviewRequest, data: dict[str, Any]) -> ClinicalRevie
         raise InvalidOutput("schema") from exc
     verifier = _Verifier(_Sources(request))
     return ClinicalReviewResult(
-        information_gaps=verifier.convert("information_gap", raw.informationGaps),
-        follow_up_questions=verifier.convert("follow_up_question", raw.followUpQuestions),
-        differential_considerations=verifier.convert(
-            "differential_consideration", raw.differentialConsiderations
-        ),
-        documentation_inconsistencies=verifier.convert(
-            "documentation_inconsistency", raw.documentationInconsistencies
-        ),
+        information_gaps=verifier.gaps(raw.informationGaps),
+        documentation_inconsistencies=verifier.inconsistencies(raw.documentationInconsistencies),
         omitted_unverified=verifier.omitted,
     )
 
@@ -210,18 +273,17 @@ def parse(request: ClinicalReviewRequest, data: dict[str, Any]) -> ClinicalRevie
 def _mock(request: ClinicalReviewRequest) -> dict[str, Any]:
     """Deterministic stand-in: quotes the first transcript line, so the evidence always verifies."""
     quote = " ".join(request.segments[0].text.split()[:12])
-    evidence = [{"source": "transcript", "quote": quote}]
     return {
-        "informationGaps": [],
-        "followUpQuestions": [
+        "informationGaps": [
             {
-                "description": "Mock suggestion: has this changed since it started?",
+                "description": "Mock suggestion: when this started is not clear in the transcript",
                 "rationale": "Mock output; no AI model was used.",
                 "uncertainty": "low",
-                "evidence": evidence,
+                "gapType": "uncertain",
+                "suggestedQuestion": "When did this start, and has it changed since?",
+                "evidence": [{"source": "transcript", "quote": quote}],
             }
         ],
-        "differentialConsiderations": [],
         "documentationInconsistencies": [],
     }
 
@@ -230,6 +292,6 @@ TASK: AiTask[ClinicalReviewRequest] = AiTask(
     name="clinical-review",
     build_messages=build_messages,
     schema=inline_schema(RawReview.model_json_schema()),
-    max_tokens=1500,
+    max_tokens=1000,
     mock=_mock,
 )

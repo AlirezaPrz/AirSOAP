@@ -133,22 +133,24 @@ class EvidenceOut(CamelModel):
 
 class SuggestionOut(CamelModel):
     id: str
-    category: Literal[
-        "information_gap", "follow_up_question", "differential_consideration", "documentation_inconsistency"
-    ]
+    category: Literal["information_gap", "documentation_inconsistency"]
     description: str
     rationale: str
     uncertainty: Literal["low", "medium", "high"]
+    # Gaps: the quotes that show where the gap is. Inconsistencies: [as said, as written].
     evidence: list[EvidenceOut]
     gap_type: Literal["not_asked", "asked_not_answered", "omitted_from_note", "uncertain"] | None = None
-    missing_information: str | None = None
+    # A question the clinician could ask to close a gap.
+    suggested_question: str | None = None
+    inconsistency_kind: (
+        Literal["number_or_unit", "negation", "laterality", "medication", "plan", "other"] | None
+    ) = None
 
 
 class ClinicalReviewResult(CamelModel):
     information_gaps: list[SuggestionOut]
-    follow_up_questions: list[SuggestionOut]
-    differential_considerations: list[SuggestionOut]
     documentation_inconsistencies: list[SuggestionOut]
-    # Suggestions the model made that were left out because their quoted evidence
-    # could not be found in the supplied text (or they advised changing treatment).
+    # Suggestions the model made that were left out because they could not be checked: a quote
+    # not found in the supplied text, an "inconsistency" whose note text was said as written,
+    # or advice to change treatment.
     omitted_unverified: int

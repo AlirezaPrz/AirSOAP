@@ -300,21 +300,31 @@ STATED = {"assessmentStated": True, "planStated": True}
 
 
 def review_answer(**lists: list) -> dict:
-    base = {
-        "informationGaps": [],
-        "followUpQuestions": [],
-        "differentialConsiderations": [],
-        "documentationInconsistencies": [],
-    }
-    return {**base, **lists}
+    return {"informationGaps": [], "documentationInconsistencies": [], **lists}
 
 
-def item(description: str, quote: str | None, *, source: str = "transcript", **extra) -> dict:
+def gap(description: str, quote: str | None, *, source: str = "transcript", **extra) -> dict:
+    """An information gap as the model returns it."""
     return {
         "description": description,
         "rationale": "Because it may clarify the history.",
         "uncertainty": "medium",
+        "gapType": "uncertain",
+        "suggestedQuestion": "",
         "evidence": [{"source": source, "quote": quote}] if quote else [],
+        **extra,
+    }
+
+
+def mismatch(description: str, said: str, written: str, **extra) -> dict:
+    """A documentation inconsistency as the model returns it: as said, and as written."""
+    return {
+        "description": description,
+        "rationale": "The note should match the visit.",
+        "uncertainty": "low",
+        "kind": "number_or_unit",
+        "transcriptQuote": said,
+        "noteQuote": written,
         **extra,
     }
 

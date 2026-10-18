@@ -245,7 +245,7 @@ describe('AirSOAP workflow', () => {
     await reachReview(user)
     await generateNote(user)
     await user.click(screen.getByRole('button', { name: 'Run Clinical Review' }))
-    await screen.findByRole('heading', { level: 3, name: 'Follow-up questions' }, { timeout: 3000 })
+    await screen.findByRole('heading', { level: 3, name: 'Information gaps' }, { timeout: 3000 })
     await user.click(screen.getByRole('button', { name: 'Submit note (demo)' }))
     await user.click(screen.getByRole('button', { name: 'Submit demo note' }))
     await screen.findByRole('heading', { level: 1, name: 'Demo submission complete' })

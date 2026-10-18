@@ -30,7 +30,7 @@ A visit with AirSOAP goes like this:
 3. **Record the visit** with the Pi's USB microphone, after confirming the patient consented. The transcript appears on screen a few seconds after each pause.
 4. **Review the transcript.** Correct any words and mark who spoke each turn, by hand or with AI suggestions.
 5. **Draft the SOAP note.** A local language model writes it from the labelled transcript, using only what was said.
-6. **Edit and, optionally, run a clinical review** that suggests information gaps, follow-up questions and documentation inconsistencies. It never changes the note.
+6. **Edit and, optionally, run a clinical review** that points out information gaps (with a question you could ask) and places where the note differs from what was said. It never changes the note.
 7. **Submit.** In this prototype nothing is sent anywhere: the encounter is cleared from memory.
 
 ## Features

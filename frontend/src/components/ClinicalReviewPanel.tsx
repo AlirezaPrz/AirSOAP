@@ -1,4 +1,4 @@
-import type { ClinicalReview, Evidence, ReviewSuggestion, TranscriptSegment } from '../api/types'
+import type { ClinicalReview, Evidence, InconsistencyKind, ReviewSuggestion, TranscriptSegment } from '../api/types'
 import { SOAP_FIELD_META } from '../lib/format'
 import type { ClinicalReviewState } from '../workflow/reducer'
 import { Button } from './Button'
@@ -7,16 +7,10 @@ import { Alert, Panel } from './ui'
 
 const SECTIONS: { key: Exclude<keyof ClinicalReview, 'omittedUnverified'>; title: string; empty: string }[] = [
   { key: 'informationGaps', title: 'Information gaps', empty: 'No information gaps were suggested.' },
-  { key: 'followUpQuestions', title: 'Follow-up questions', empty: 'No follow-up questions were suggested.' },
-  {
-    key: 'differentialConsiderations',
-    title: 'Differential considerations',
-    empty: 'Nothing in the documentation supported a differential suggestion.',
-  },
   {
     key: 'documentationInconsistencies',
-    title: 'Documentation consistency',
-    empty: 'No inconsistencies between the transcript and the note were suggested.',
+    title: 'Documentation inconsistencies',
+    empty: 'No differences between the transcript and the note were suggested.',
   },
 ]
 
@@ -26,6 +20,15 @@ const GAP_LABELS = {
   omitted_from_note: 'In the transcript, but not in the note',
   uncertain: 'Status unclear',
 } as const
+
+const KIND_LABELS: Record<InconsistencyKind, string> = {
+  number_or_unit: 'Number or unit',
+  negation: 'Negation',
+  laterality: 'Left or right',
+  medication: 'Medication',
+  plan: 'Plan',
+  other: 'Other difference',
+}
 
 /** The heading's ID, so the review steps can jump to it. */
 export const CLINICAL_REVIEW_HEADING = 'clinical-review-heading'
@@ -61,6 +64,11 @@ function SuggestionCard({
   segments: TranscriptSegment[]
   onDismiss: (id: string) => void
 }) {
+  const inconsistency = suggestion.category === 'documentation_inconsistency'
+  const [said, written] = suggestion.evidence
+  const kind = inconsistency
+    ? suggestion.inconsistencyKind && KIND_LABELS[suggestion.inconsistencyKind]
+    : suggestion.gapType && GAP_LABELS[suggestion.gapType]
   return (
     <li className="rounded-(--radius-panel) bg-sunken p-4">
       <div className="flex items-start justify-between gap-4">
@@ -75,22 +83,44 @@ function SuggestionCard({
         </Button>
       </div>
       <p className="mt-1 text-[15px] text-ink-2">{suggestion.rationale}</p>
-      {suggestion.gapType && <p className="mt-2 text-sm text-ink-2">{GAP_LABELS[suggestion.gapType]}</p>}
-      {suggestion.missingInformation && (
-        <p className="mt-2 text-sm text-ink-2">
-          <span className="font-medium text-ink">Missing or pointing against: </span>
-          {suggestion.missingInformation}
+
+      {suggestion.suggestedQuestion && (
+        <p className="mt-3 rounded-(--radius-control) bg-surface px-3 py-2.5 text-[15px]">
+          <span className="block text-sm text-ink-3">You could ask</span>
+          <span className="text-ink">{suggestion.suggestedQuestion}</span>
         </p>
       )}
-      <ul className="mt-3 space-y-2" aria-label="Supporting text">
-        {suggestion.evidence.map((evidence) => (
-          <li key={`${evidence.source}-${evidence.quote}`} className="border-l-2 border-field pl-3 text-sm">
-            <span className="text-ink-3">{evidenceLabel(evidence, segments)}: </span>
-            <q className="text-ink">{evidence.quote}</q>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-3 text-sm text-ink-3">Uncertainty: {UNCERTAINTY_LABELS[suggestion.uncertainty]}</p>
+
+      {inconsistency && said && written ? (
+        <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+          {[
+            { term: 'Said', evidence: said },
+            { term: 'Written', evidence: written },
+          ].map(({ term, evidence }) => (
+            <div key={term} className="rounded-(--radius-control) bg-surface px-3 py-2.5">
+              <dt className="text-sm text-ink-3">
+                <span className="font-medium text-ink-2">{term}</span> · {evidenceLabel(evidence, segments)}
+              </dt>
+              <dd className="mt-0.5 text-[15px] text-ink">
+                <q>{evidence.quote}</q>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <ul className="mt-3 space-y-2" aria-label="Supporting text">
+          {suggestion.evidence.map((evidence) => (
+            <li key={`${evidence.source}-${evidence.quote}`} className="border-l-2 border-field pl-3 text-sm">
+              <span className="text-ink-3">{evidenceLabel(evidence, segments)}: </span>
+              <q className="text-ink">{evidence.quote}</q>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 text-sm text-ink-3">
+        {kind && <>{kind} · </>}Uncertainty: {UNCERTAINTY_LABELS[suggestion.uncertainty]}
+      </p>
     </li>
   )
 }
@@ -125,8 +155,9 @@ export function ClinicalReviewPanel({
               Clinical review
             </h2>
             <p className="mt-1 text-[15px] text-ink-2">
-              Optional. After you have reviewed and edited the transcript and note, run a second look. It uses your
-              speaker labels and your current note, and suggests; it never changes the note.
+              Optional. A second look at the documentation: details that seem missing or unclear, and places where
+              the note differs from what was said. It uses your speaker labels and your current note, and suggests; it
+              never changes the note.
             </p>
           </div>
           <Button variant="secondary" onClick={onRun} disabled={!canRun || running}>
@@ -195,8 +226,8 @@ export function ClinicalReviewPanel({
               {result.review.omittedUnverified > 0 && (
                 <p className="text-sm text-ink-3">
                   {result.review.omittedUnverified}{' '}
-                  {result.review.omittedUnverified === 1 ? 'suggestion was' : 'suggestions were'} left out because the
-                  text it relied on could not be found in the transcript or note.
+                  {result.review.omittedUnverified === 1 ? 'suggestion was' : 'suggestions were'} left out because they
+                  could not be checked against the transcript and note.
                 </p>
               )}
             </>

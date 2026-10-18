@@ -9,7 +9,7 @@ from helpers import (
     FakeAiClient,
     FakeRecorder,
     FakeTranscriber,
-    item,
+    gap,
     record_once,
     review_answer,
     review_payload,
@@ -52,26 +52,26 @@ def test_soap_job_reports_unverified_numbers_as_warnings(settings):
 
 
 def test_clinical_review_returns_suggestions_and_never_the_note(settings):
-    answer = review_answer(followUpQuestions=[item("Has the fever persisted?", "felt feverish last night")])
+    answer = review_answer(informationGaps=[gap("Has the fever persisted?", "felt feverish last night")])
     with running_app(settings, ai_client=FakeAiClient([answer])) as client:
         job_id = start(client, "/api/ai/clinical-review", review_payload())
         body = wait_for_ai_job(client, job_id, {"completed"})
     assert body["kind"] == "clinical-review"
     assert body["soapResult"] is None
-    suggestion = body["reviewResult"]["followUpQuestions"][0]
+    suggestion = body["reviewResult"]["informationGaps"][0]
     assert suggestion["evidence"][0]["segmentId"] == "seg-4"
     assert body["reviewResult"]["omittedUnverified"] == 0
     assert "subjective" not in str(body["reviewResult"])  # the note is not echoed back or changed
 
 
 def test_rerunning_the_review_after_an_edit_keeps_suggestion_ids_stable(settings):
-    answer = review_answer(followUpQuestions=[item("Has the fever persisted?", "felt feverish last night")])
+    answer = review_answer(informationGaps=[gap("Has the fever persisted?", "felt feverish last night")])
     ids = []
     with running_app(settings, ai_client=FakeAiClient([answer])) as client:
         for note in (NOTE, {**NOTE, "plan": "Fluids, rest and a review in two days."}):
             job_id = start(client, "/api/ai/clinical-review", review_payload(note))
             ids.append(
-                wait_for_ai_job(client, job_id, {"completed"})["reviewResult"]["followUpQuestions"][0]["id"]
+                wait_for_ai_job(client, job_id, {"completed"})["reviewResult"]["informationGaps"][0]["id"]
             )
     assert ids[0] == ids[1]
 
@@ -283,7 +283,7 @@ def test_logs_never_contain_transcript_note_or_model_output(settings, caplog):
     ]
     with running_app(settings, ai_client=FakeAiClient([leak])) as client:
         wait_for_ai_job(client, start(client, "/api/ai/soap", soap_payload(segs)), {"completed"})
-        answer = review_answer(followUpQuestions=[item("Q?", f"{MARKER} patient statement")])
+        answer = review_answer(informationGaps=[gap("Q?", f"{MARKER} patient statement")])
         client.app.state.services.ai_client.responses = [answer]
         wait_for_ai_job(
             client, start(client, "/api/ai/clinical-review", review_payload(note, segs)), {"completed"}

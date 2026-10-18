@@ -206,11 +206,7 @@ export interface ClinicalReviewRequest {
   context: SoapGenerationContext
 }
 
-export type SuggestionCategory =
-  | 'information_gap'
-  | 'follow_up_question'
-  | 'differential_consideration'
-  | 'documentation_inconsistency'
+export type SuggestionCategory = 'information_gap' | 'documentation_inconsistency'
 
 export type Uncertainty = 'low' | 'medium' | 'high'
 
@@ -229,17 +225,20 @@ export interface ReviewSuggestion {
   description: string
   rationale: string
   uncertainty: Uncertainty
+  /** Gaps: where the gap shows. Inconsistencies: the words as said, then as written. */
   evidence: Evidence[]
   gapType?: 'not_asked' | 'asked_not_answered' | 'omitted_from_note' | 'uncertain' | null
-  missingInformation?: string | null
+  /** A question the clinician could ask to close a gap. */
+  suggestedQuestion?: string | null
+  inconsistencyKind?: InconsistencyKind | null
 }
+
+export type InconsistencyKind = 'number_or_unit' | 'negation' | 'laterality' | 'medication' | 'plan' | 'other'
 
 export interface ClinicalReview {
   informationGaps: ReviewSuggestion[]
-  followUpQuestions: ReviewSuggestion[]
-  differentialConsiderations: ReviewSuggestion[]
   documentationInconsistencies: ReviewSuggestion[]
-  /** Suggestions left out because their quoted evidence could not be found. */
+  /** Suggestions left out because they could not be checked against the transcript and note. */
   omittedUnverified: number
 }
 

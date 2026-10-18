@@ -66,14 +66,14 @@ describe('createMockApi', () => {
       context: { patientAge: 40, encounterType: 'acute' as const },
     }
     const { review } = await api.runClinicalReview(request)
-    const suggestions = [...review.informationGaps, ...review.followUpQuestions, ...review.differentialConsiderations, ...review.documentationInconsistencies]
+    const suggestions = [...review.informationGaps, ...review.documentationInconsistencies]
     expect(suggestions.length).toBeGreaterThan(0)
     const text = JSON.stringify(request)
     for (const suggestion of suggestions) {
       expect(suggestion.evidence.length).toBeGreaterThan(0)
       for (const evidence of suggestion.evidence) expect(text).toContain(evidence.quote)
     }
-    expect(review.followUpQuestions[0].id).toBe((await api.runClinicalReview(request)).review.followUpQuestions[0].id)
+    expect(review.informationGaps[0].id).toBe((await api.runClinicalReview(request)).review.informationGaps[0].id)
   })
 
   it('can make the clinical review fail once, then succeed', async () => {
