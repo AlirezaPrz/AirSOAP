@@ -24,6 +24,7 @@ def settings(tmp_path: Path) -> Settings:
         cookie_secure=False,  # TestClient talks plain HTTP
         allowed_origins="http://testserver",
         session_sweep_seconds=3600,
+        live="off",  # tests of live transcription turn it on explicitly
     )
 
 

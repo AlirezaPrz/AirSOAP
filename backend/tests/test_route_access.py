@@ -32,6 +32,7 @@ ROUTE_ACCESS: dict[tuple[str, str], str] = {
     ("POST", "/api/recording/start"): CLINICIAN,
     ("POST", "/api/recording/stop"): CLINICIAN,
     ("POST", "/api/recording/cancel"): CLINICIAN,
+    ("GET", "/api/recording/{recording_id}/live"): CLINICIAN,
     ("GET", "/api/transcriptions/{job_id}"): CLINICIAN,
     ("POST", "/api/transcriptions/{job_id}/cancel"): CLINICIAN,
     ("POST", "/api/ai/soap"): CLINICIAN,
@@ -41,7 +42,7 @@ ROUTE_ACCESS: dict[tuple[str, str], str] = {
     ("DELETE", "/api/ai/jobs/{job_id}"): CLINICIAN,
 }
 
-PATH_VALUES = {"{user_id}": "0" * 32, "{job_id}": "0" * 32}
+PATH_VALUES = {"{user_id}": "0" * 32, "{job_id}": "0" * 32, "{recording_id}": "0" * 32}
 
 
 def concrete(path: str) -> str:

@@ -30,6 +30,8 @@ class SystemStatusResponse(CamelModel):
     ai: str
     ai_ready: bool
     recording: RecordingState
+    live: str  # "off", "simulated" or "whisper-server (live)"
+    live_available: bool
 
 
 class RecordingRequest(CamelModel):
@@ -39,6 +41,25 @@ class RecordingRequest(CamelModel):
 class StartRecordingResponse(CamelModel):
     recording_id: str
     started_at: datetime
+    # True when the transcript is produced while recording; follow GET /api/recording/{id}/live.
+    live: bool = False
+
+
+class LiveSegmentOut(CamelModel):
+    id: str
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class LiveSnapshotOut(CamelModel):
+    """One event on the live stream: the whole transcript so far (so a reconnect needs nothing else)."""
+
+    recording_id: str
+    revision: int
+    status: str
+    behind_ms: int
+    segments: list[LiveSegmentOut]
 
 
 class StopRecordingResponse(CamelModel):

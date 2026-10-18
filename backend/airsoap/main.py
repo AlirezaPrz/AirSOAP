@@ -10,6 +10,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -30,10 +31,11 @@ from .api.deps import Services
 from .api.routes import health_router, recording_router, system_router, transcription_router
 from .auth.passwords import Passwords
 from .auth.service import AuthService
-from .config import AiKind, RecorderKind, Settings, TranscriberKind, WhisperLifecycle
+from .config import AiKind, LiveEngine, RecorderKind, Settings, TranscriberKind, WhisperLifecycle
 from .db import Database
 from .errors import ApiError, api_error_handler
 from .jobs import JobManager
+from .live import GrowingWav, LiveSession, LiveTranscriber, MockLiveTranscriber, WhisperLiveTranscriber
 from .recording import ArecordRecorder, MockRecorder, Recorder
 from .sessions import RecordingSessions
 from .storage import WorkDir
@@ -122,6 +124,37 @@ def build_transcriber(settings: Settings) -> Transcriber:
     return MockTranscriber(delay_seconds=settings.mock_transcribe_seconds)
 
 
+# Live blocks are short (15 s at most); a request that takes this long means Whisper is stuck.
+LIVE_REQUEST_TIMEOUT_SECONDS = 60.0
+
+
+def build_live_transcriber(settings: Settings) -> LiveTranscriber | None:
+    if settings.resolved_live is LiveEngine.MOCK:
+        return MockLiveTranscriber()
+    if settings.resolved_live is LiveEngine.WHISPER:
+        parts = urlsplit(settings.live_whisper_url)
+        assert settings.whisper_server_path and settings.live_whisper_model_path  # noqa: S101 - resolved
+        assert parts.hostname and parts.port  # noqa: S101 - validated
+        client = WhisperServerTranscriber(
+            base_url=settings.live_whisper_url,
+            timeout_seconds=LIVE_REQUEST_TIMEOUT_SECONDS,
+            language=settings.whisper_language,
+        )
+        manager = WhisperProcessManager(
+            binary=settings.whisper_server_path,
+            model=settings.live_whisper_model_path,
+            host=parts.hostname,
+            port=parts.port,
+            threads=settings.whisper_threads,
+            language=settings.whisper_language,
+            idle_seconds=0,
+            startup_timeout=settings.whisper_startup_timeout_seconds,
+            probe=client.is_reachable,
+        )
+        return WhisperLiveTranscriber(client=client, manager=manager)
+    return None
+
+
 def build_ai_client(settings: Settings) -> AiClient:
     if settings.resolved_ai is AiKind.OLLAMA:
         return OllamaClient(
@@ -152,6 +185,7 @@ def create_app(
     ai_client: AiClient | None = None,
     password_hasher: PasswordHasher | None = None,
     auth_clock: Callable[[], datetime] | None = None,
+    live_transcriber_override: LiveTranscriber | None = None,
 ) -> FastAPI:
     """``password_hasher`` and ``auth_clock`` exist for tests (fast hashing, controlled time)."""
     settings = settings or Settings()
@@ -181,17 +215,41 @@ def create_app(
         max_pending=settings.max_pending_ai_jobs,
         max_attempts=settings.ai_max_attempts,
     )
+    live_transcriber = (
+        live_transcriber_override
+        if live_transcriber_override is not None
+        else build_live_transcriber(settings)
+    )
+
+    def start_live(recording_id: str, path: Path) -> LiveSession:
+        assert live_transcriber is not None  # noqa: S101
+        return LiveSession(
+            recording_id=recording_id,
+            source=GrowingWav(path),
+            transcriber=live_transcriber,
+            pause_ms=settings.live_pause_ms,
+            max_block_ms=round(settings.live_max_block_seconds * 1000),
+            behind_ms=round(settings.live_behind_seconds * 1000),
+            hold_model=gate.for_transcription,
+        )
+
     services = Services(
         settings=settings,
         storage=storage,
         recorder=recorder,
         transcriber=transcriber,
         jobs=jobs,
-        sessions=RecordingSessions(recorder=recorder, storage=storage, jobs=jobs),
+        sessions=RecordingSessions(
+            recorder=recorder,
+            storage=storage,
+            jobs=jobs,
+            live_factory=start_live if live_transcriber is not None else None,
+        ),
         ai_client=ai_client,
         ai_jobs=ai_jobs,
         db=db,
         auth=auth,
+        live=live_transcriber,
     )
 
     @asynccontextmanager
@@ -203,7 +261,13 @@ def create_app(
             logger.info("removed %d leftover audio file(s) from a previous run", removed)
         await jobs.start()
         await ai_jobs.start()
-        logger.info("recorder=%s transcriber=%s ai=%s", recorder.name, transcriber.name, ai_client.name)
+        logger.info(
+            "recorder=%s transcriber=%s live=%s ai=%s",
+            recorder.name,
+            transcriber.name,
+            live_transcriber.name if live_transcriber else "off",
+            ai_client.name,
+        )
         sweeper = asyncio.create_task(_sweep_lapsed_sessions(services, settings.session_sweep_seconds))
         try:
             yield
@@ -212,6 +276,8 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sweeper
             await services.sessions.close()
+            if live_transcriber is not None:
+                await live_transcriber.stop()
             await jobs.close()
             await ai_jobs.close()
             await ai_client.unload()  # leave no model in memory after the backend stops

@@ -43,7 +43,10 @@ class WhisperServerTranscriber:
         )
 
     async def transcribe(self, path: Path, duration_ms: int) -> TranscriptResult:
-        audio = await asyncify(path.read_bytes)()
+        return await self.transcribe_wav(await asyncify(path.read_bytes)(), duration_ms)
+
+    async def transcribe_wav(self, audio: bytes, duration_ms: int) -> TranscriptResult:
+        """Transcribe WAV bytes held in memory (the live worker's blocks never touch the disk)."""
         form = {
             "response_format": "verbose_json",
             "temperature": "0.0",

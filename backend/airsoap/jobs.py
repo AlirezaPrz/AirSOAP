@@ -15,11 +15,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .errors import ApiError
 from .storage import WorkDir
 from .transcription import Transcriber, TranscriptionError, TranscriptResult
+
+if TYPE_CHECKING:
+    from .live import LiveSession
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,9 @@ class Job:
     error: JobError | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
     owner_id: str | None = None
+    # A live recording: its transcript is already (nearly) done; only the last stretch remains.
+    live: "LiveSession | None" = field(default=None, repr=False)
+    fallback: bool = False  # live transcription failed, so the whole file was transcribed instead
 
     @property
     def progress(self) -> int | None:
@@ -107,11 +113,19 @@ class JobManager:
             self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
         for job in self._jobs.values():
+            if job.live is not None:
+                await job.live.abort()
             if job.status not in FINISHED:
                 self._finish(job, JobStatus.CANCELLED)
         self._jobs.clear()
 
-    def submit(self, audio_path: Path, audio_duration_ms: int, owner_id: str | None = None) -> Job:
+    def submit(
+        self,
+        audio_path: Path,
+        audio_duration_ms: int,
+        owner_id: str | None = None,
+        live: "LiveSession | None" = None,
+    ) -> Job:
         """Queue a recording. The caller still owns (and must delete) the file if this raises."""
         if self._queue is None:
             raise RuntimeError("JobManager.start() was not called")
@@ -127,6 +141,7 @@ class JobManager:
             audio_duration_ms=audio_duration_ms,
             created_at=self._clock(),
             owner_id=owner_id,
+            live=live,
         )
         self._jobs[job.id] = job
         self._queue.put_nowait(job.id)
@@ -145,6 +160,8 @@ class JobManager:
         """Idempotent: cancelling a finished job returns it unchanged."""
         job = self.get(job_id, owner_id)
         if job.status is JobStatus.QUEUED:
+            if job.live is not None:
+                await job.live.abort()
             self._finish(job, JobStatus.CANCELLED)
         elif job.status is JobStatus.PROCESSING and job.task is not None:
             job.task.cancel()
@@ -181,10 +198,19 @@ class JobManager:
     async def _process(self, job: Job) -> None:
         started = self._clock()
         try:
-            # Only one heavy job runs at a time, and Qwen is unloaded before whisper-server starts.
-            async with self._gate.for_transcription() if self._gate else contextlib.nullcontext():
-                result = await self._transcriber.transcribe(job.audio_path, job.audio_duration_ms)
+            result = None
+            if job.live is not None:
+                # The live transcript is the final transcript: only its last stretch is left to do.
+                result = await job.live.finish(job.audio_duration_ms)
+                job.fallback = result is None
+            if result is None:
+                # No live transcript (or it failed): transcribe the whole file, as before Phase 6.
+                # Only one heavy job runs at a time, and Qwen is unloaded before whisper-server starts.
+                async with self._gate.for_transcription() if self._gate else contextlib.nullcontext():
+                    result = await self._transcriber.transcribe(job.audio_path, job.audio_duration_ms)
         except asyncio.CancelledError:
+            if job.live is not None:
+                await asyncio.shield(job.live.abort())
             self._finish(job, JobStatus.CANCELLED)
             logger.info("job=%s cancelled", job.id)
             raise
@@ -200,8 +226,9 @@ class JobManager:
             elapsed_ms = round((self._clock() - started) * 1000)
             ratio = elapsed_ms / job.audio_duration_ms if job.audio_duration_ms else 0.0
             logger.info(
-                "job=%s completed audio_ms=%d elapsed_ms=%d realtime_factor=%.2f segments=%d",
+                "job=%s completed source=%s audio_ms=%d elapsed_ms=%d realtime_factor=%.2f segments=%d",
                 job.id,
+                "live" if job.live is not None and not job.fallback else "whole-file",
                 job.audio_duration_ms,
                 elapsed_ms,
                 ratio,
@@ -220,6 +247,7 @@ class JobManager:
         job.result = result
         job.error = error
         job.finished_at = self._clock()
+        job.live = None
         self._storage.delete(job.audio_path)
 
     def _purge_expired(self) -> None:

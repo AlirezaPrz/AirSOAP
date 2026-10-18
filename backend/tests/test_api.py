@@ -35,6 +35,8 @@ def test_health_reports_components_and_state(settings):
         "ai": "mock",
         "aiReady": True,
         "recording": "idle",
+        "live": "off",
+        "liveAvailable": False,
     }
 
 

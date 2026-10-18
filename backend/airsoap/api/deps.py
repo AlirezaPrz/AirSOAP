@@ -9,6 +9,7 @@ from ..auth.service import AuthService
 from ..config import Settings
 from ..db import Database
 from ..jobs import JobManager
+from ..live import LiveTranscriber
 from ..recording import Recorder
 from ..sessions import RecordingSessions
 from ..storage import WorkDir
@@ -27,6 +28,7 @@ class Services:
     ai_jobs: AiJobManager
     db: Database
     auth: AuthService
+    live: LiveTranscriber | None = None
 
     async def discard_owner(self, owner_id: str) -> None:
         """Stop this account's recording and drop its jobs and results (sign-out, expiry, disabling)."""

@@ -36,6 +36,17 @@ class WhisperLifecycle(StrEnum):
     ON_DEMAND = "on-demand"  # the backend starts it for a job and stops it afterwards
 
 
+class LiveMode(StrEnum):
+    AUTO = "auto"  # live transcription when a live model is configured (always simulated in mock mode)
+    OFF = "off"
+
+
+class LiveEngine(StrEnum):
+    OFF = "off"
+    MOCK = "mock"
+    WHISPER = "whisper-server"
+
+
 class TranscriberKind(StrEnum):
     AUTO = "auto"
     MOCK = "mock"
@@ -116,6 +127,15 @@ class Settings(BaseSettings):
     whisper_threads: int = Field(default=4, ge=1, le=64)
     whisper_idle_seconds: float = Field(default=20, ge=0)
     whisper_startup_timeout_seconds: float = Field(default=90, gt=0)
+
+    # Live transcription: a second, faster whisper-server (base.en on the Pi) transcribes each stretch of
+    # speech while recording. Its transcript is the final one; whole-file transcription is the fallback.
+    live: LiveMode = LiveMode.AUTO
+    live_whisper_model_path: Path | None = None
+    live_whisper_url: str = "http://127.0.0.1:8179"
+    live_pause_ms: int = Field(default=600, ge=200, le=3000)
+    live_max_block_seconds: float = Field(default=15, ge=3, le=30)
+    live_behind_seconds: float = Field(default=15, ge=3)
 
     ai: AiKind = AiKind.AUTO
     ollama_url: str = "http://127.0.0.1:11434"
@@ -215,6 +235,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ollama_url must point at this device (127.0.0.1); clinical text never leaves it"
             )
+        live = urlsplit(self.live_whisper_url)
+        if live.scheme != "http" or live.hostname not in LOOPBACK_HOSTS or live.port is None:
+            raise ValueError(
+                "live_whisper_url must be http://127.0.0.1:<port>; audio never leaves this device"
+            )
         if self.whisper_lifecycle is WhisperLifecycle.ON_DEMAND:
             if parts.hostname not in LOOPBACK_HOSTS or parts.port is None:
                 raise ValueError(
@@ -249,6 +274,16 @@ class Settings(BaseSettings):
         if self.ai is AiKind.AUTO:
             return AiKind.MOCK if _is_mac() else AiKind.OLLAMA
         return self.ai
+
+    @cached_property
+    def resolved_live(self) -> LiveEngine:
+        if self.live is LiveMode.OFF:
+            return LiveEngine.OFF
+        if self.resolved_transcriber is TranscriberKind.MOCK:
+            return LiveEngine.MOCK
+        if self.live_whisper_model_path is not None and self.whisper_server_path is not None:
+            return LiveEngine.WHISPER
+        return LiveEngine.OFF
 
     @cached_property
     def resolved_transcriber(self) -> TranscriberKind:

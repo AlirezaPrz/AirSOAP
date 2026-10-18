@@ -1,13 +1,20 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
+from fastapi.responses import StreamingResponse
 
 from ..auth.csrf import require_same_origin
 from ..auth.deps import ActiveSessionDep, ClinicianDep, active_session, require_clinician
+from ..live import LiveSession, LiveStatus
 from .deps import ServicesDep
 from .schemas import (
     CancelRecordingResponse,
     HealthResponse,
+    LiveSegmentOut,
+    LiveSnapshotOut,
     RecordingRequest,
     StartRecordingResponse,
     StopRecordingResponse,
@@ -16,6 +23,9 @@ from .schemas import (
 )
 
 JobIdPath = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$", description="Transcription job ID")]
+RecordingIdPath = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$", description="Recording ID")]
+HEARTBEAT_SECONDS = 15.0
+STREAM_ENDS = frozenset({LiveStatus.DONE, LiveStatus.FINISHING, LiveStatus.FAILED})
 
 # Public: liveness only. It says nothing about components or activity.
 health_router = APIRouter(prefix="/api", tags=["health"])
@@ -48,13 +58,69 @@ async def system_status(_session: ActiveSessionDep, services: ServicesDep) -> Sy
         ai=services.ai_client.name,
         ai_ready=await services.ai_client.is_ready(),
         recording=services.sessions.state,
+        live=services.live.name if services.live else "off",
+        live_available=services.live.available() if services.live else False,
     )
 
 
 @recording_router.post("/start")
 async def start_recording(user: ClinicianDep, services: ServicesDep) -> StartRecordingResponse:
     active = await services.sessions.start(owner_id=user.user.id)
-    return StartRecordingResponse(recording_id=active.id, started_at=active.started_at)
+    return StartRecordingResponse(
+        recording_id=active.id, started_at=active.started_at, live=active.live is not None
+    )
+
+
+def _event(live: LiveSession) -> str:
+    snapshot = live.snapshot()
+    body = LiveSnapshotOut(
+        recording_id=live.recording_id,
+        revision=snapshot.revision,
+        status=snapshot.status.value,
+        behind_ms=snapshot.behind_ms,
+        segments=[
+            LiveSegmentOut(id=s.id, start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
+            for s in snapshot.segments
+        ],
+    )
+    return f"id: {snapshot.revision}\nevent: snapshot\ndata: {json.dumps(body.model_dump(by_alias=True))}\n\n"
+
+
+@recording_router.get("/{recording_id}/live")
+async def live_transcript(
+    recording_id: RecordingIdPath, request: Request, user: ClinicianDep, services: ServicesDep
+) -> StreamingResponse:
+    """Server-sent events with the whole live transcript so far, each time it changes.
+
+    Only the clinician who started the recording can follow it. The stream ends when the recording
+    stops (the transcript then arrives through the transcription job, as before) or if live
+    transcription fails (the recording carries on and is transcribed as a whole file on stop).
+    The browser reconnects by itself; every event is complete, so nothing is lost.
+    """
+    live = services.sessions.live_for(recording_id, owner_id=user.user.id)
+
+    async def stream() -> AsyncIterator[str]:
+        revision = -1
+        while True:
+            snapshot = live.snapshot()
+            if snapshot.revision != revision:
+                revision = snapshot.revision
+                yield _event(live)
+                if snapshot.status in STREAM_ENDS:
+                    return
+            if await request.is_disconnected():
+                return
+            before = revision
+            snapshot = await live.wait_for_change(revision, HEARTBEAT_SECONDS)
+            if snapshot.revision == before:
+                yield ": still recording\n\n"  # keeps proxies from closing an idle connection
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @recording_router.post("/stop")
