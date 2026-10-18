@@ -271,3 +271,46 @@ def test_compact_prompt_numbers_turns_and_marks_context() -> None:
     assert "- [C] Good morning." in prompt
     assert "1. Any fever?\n2. No." in prompt
     assert "Label these 2 turns:" in prompt
+
+
+def test_numbered_labels_anchor_every_label_to_its_turn() -> None:
+    schema = bench.numbered_schema(3)
+    assert schema["required"] == ["1", "2", "3"]
+    assert schema["additionalProperties"] is False
+    assert bench.numbered_rejection({"1": "clinician", "2": "patient", "3": "unknown"}, 3) is None
+    assert bench.numbered_rejection({"1": "clinician", "2": "patient"}, 3) == "keys_2_of_3"
+    assert bench.numbered_rejection({"1": "clinician", "2": "patient", "4": "unknown"}, 3) == "keys_3_of_3"
+    assert bench.numbered_rejection({"1": "clinician", "2": "nurse", "3": "unknown"}, 3) == "bad_speaker"
+    assert bench.numbered_rejection(["clinician"], 1) == "not_an_object"
+
+
+def test_wrong_turns_lists_mislabels_but_not_unknowns() -> None:
+    assert bench.wrong_turns(["clinician", "unknown", "clinician"], ["clinician", "patient", "patient"]) == [
+        3
+    ]
+
+
+def test_label_formats_are_compared_on_the_same_turns() -> None:
+    truth = [speaker for speaker, _ in DIALOGUE]
+
+    class FakeOllama:
+        def tiny(self, _model):
+            return 0.1
+
+        def label_numbered(self, _model, texts, earlier):
+            start = len(earlier)
+            return 0.2, truth[start : start + len(texts)], None
+
+        def label_compact(self, _model, texts, _earlier):
+            return 0.1, None, f"count_0_of_{len(texts)}"
+
+        def label(self, _model, turns, _earlier):
+            return 0.5, ["unknown"] * len(turns), None
+
+    results = bench.run_label_formats(FakeOllama(), "fake")
+    assert results["numbered"]["score"]["wrong"] == 0
+    assert results["numbered"]["score"]["labelled"] == len(truth)
+    assert results["letters"]["rejected_because"] == ["count_0_of_15", f"count_0_of_{len(truth) - 15}"]
+    assert results["objects"]["score"]["unknown"] == len(truth)
+    advice = bench.recommend({"speaker_label_formats": results})
+    assert any("numbered format" in line and "0 wrong" in line for line in advice)

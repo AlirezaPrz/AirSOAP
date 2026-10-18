@@ -742,6 +742,41 @@ def compact_rejection(answer: object, count: int) -> str | None:
     return None
 
 
+NUMBERED_SYSTEM = (
+    "You label who is speaking in a transcript of a medical visit between one clinician and one patient. "
+    "You only see the words, never the voices. The turns are numbered. Answer with an object that maps "
+    "every turn number to clinician, patient or unknown. Clues: the clinician asks about symptoms and "
+    "history, examines, states findings and test results, names a diagnosis, prescribes and gives "
+    "instructions. The patient describes symptoms, answers the clinician's questions and asks about their "
+    "own care. Use unknown when the words alone do not show who spoke, for example 'Okay.', 'Yes.' or "
+    "'Thank you.', or whenever you are not sure. Do not guess to fill every turn."
+)
+
+SPEAKERS = ["clinician", "patient", "unknown"]
+
+
+def numbered_schema(count: int) -> dict:
+    """One entry per turn number, in order, each a speaker word: the number anchors every label to its turn."""
+    keys = [str(n) for n in range(1, count + 1)]
+    return {
+        "type": "object",
+        "properties": {key: {"type": "string", "enum": SPEAKERS} for key in keys},
+        "required": keys,
+        "additionalProperties": False,
+    }
+
+
+def numbered_rejection(answer: object, count: int) -> str | None:
+    if not isinstance(answer, dict):
+        return "not_an_object"
+    keys = [str(n) for n in range(1, count + 1)]
+    if sorted(answer, key=lambda k: (len(k), k)) != keys:
+        return f"keys_{len(answer)}_of_{count}"
+    if any(answer[key] not in SPEAKERS for key in keys):
+        return "bad_speaker"
+    return None
+
+
 def rejection_reason(answer: object, ids: list[str]) -> str | None:
     """Why an answer is unusable, as a fixed code (never the answer's text), or None if it is fine."""
     if not isinstance(answer, dict) or not isinstance(answer.get("labels"), list):
@@ -869,6 +904,41 @@ class Ollama:
             return took, None, reason
         return took, [COMPACT_LETTERS[letter] for letter in answer["speakers"]], None
 
+    def label_numbered(
+        self, model: str, texts: list[str], earlier: list[tuple[str, str]]
+    ) -> tuple[float, list[str] | None, str | None]:
+        """The turn-numbered format: (seconds, labels or None, rejection reason or None)."""
+        began = time.monotonic()
+        try:
+            response = self._post(
+                "/api/chat",
+                {
+                    "model": model,
+                    "stream": False,
+                    "format": numbered_schema(len(texts)),
+                    "keep_alive": "5m",
+                    "options": {"temperature": 0, "num_ctx": 4096},
+                    "messages": [
+                        {"role": "system", "content": NUMBERED_SYSTEM},
+                        {"role": "user", "content": compact_prompt(texts, earlier)},
+                    ],
+                },
+                600,
+            )
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            return time.monotonic() - began, None, f"request_failed_{type(exc).__name__}"
+        took = time.monotonic() - began
+        if response.get("done_reason") == "length":
+            return took, None, "truncated"
+        try:
+            answer = json.loads(response.get("message", {}).get("content", ""))
+        except ValueError:
+            return took, None, "not_json"
+        reason = numbered_rejection(answer, len(texts))
+        if reason:
+            return took, None, reason
+        return took, [answer[str(n)] for n in range(1, len(texts) + 1)], None
+
     def tiny(self, model: str) -> float:
         began = time.monotonic()
         self._post(
@@ -883,6 +953,11 @@ class Ollama:
             600,
         )
         return time.monotonic() - began
+
+
+def wrong_turns(predicted: list[str], truth: list[str]) -> list[int]:
+    """1-based turn numbers labelled with the wrong role (Unknown is not wrong)."""
+    return [n for n, (p, t) in enumerate(zip(predicted, truth, strict=True), 1) if p not in ("unknown", t)]
 
 
 def score_labels(predicted: list[str], truth: list[str]) -> dict[str, float]:
@@ -920,7 +995,7 @@ class Labeller:
 
     def _run(self, texts: list[str]) -> None:
         with self._busy:
-            took, labels, reason = self.ollama.label_compact(self.model, texts, [])
+            took, labels, reason = self.ollama.label_numbered(self.model, texts, [])
             self.times.append(took)
             self.invalid += labels is None
             if reason:
@@ -940,6 +1015,54 @@ class Labeller:
 
 
 # --- the benchmark -------------------------------------------------------------------------------
+
+
+def run_label_formats(ollama: Ollama, model: str) -> dict:
+    """The same 30 turns in each answer format, two batches of 15 (the second with the first as context)."""
+    truth = [speaker for speaker, _ in DIALOGUE]
+    texts = [text for _, text in DIALOGUE]
+    results: dict = {"model_load_s": round(ollama.tiny(model), 2)}
+    print(f"  loading the model {results['model_load_s']:.1f} s")
+
+    def by_text(label):
+        def run(batch, earlier):
+            return label(model, batch, earlier)
+
+        return run
+
+    def by_id(batch, earlier):
+        offset = 0 if not earlier else len(earlier)
+        turns = [(f"t{offset + i}", t) for i, t in enumerate(batch)]
+        context = [(f"t{i}", t, s) for i, (t, s) in enumerate(earlier)]
+        return ollama.label(model, turns, context)
+
+    formats = {
+        "numbered": ("turn number -> speaker (new)", by_text(ollama.label_numbered)),
+        "letters": ("one letter per turn", by_text(ollama.label_compact)),
+        "objects": ("object per turn (first format)", by_id),
+    }
+    for key, (title, run) in formats.items():
+        with ResourceSampler() as sampler:
+            first_s, first, first_reason = run(texts[:15], [])
+            second_s, second, second_reason = run(
+                texts[15:], list(zip(texts[:15], first or ["unknown"] * 15, strict=True))
+            )
+        predicted = (first or ["unknown"] * 15) + (second or ["unknown"] * (len(texts) - 15))
+        results[key] = {
+            "first_15_s": round(first_s, 2),
+            "second_15_with_context_s": round(second_s, 2),
+            "rejected_because": [r for r in (first_reason, second_reason) if r],
+            "score": score_labels(predicted, truth),
+            "wrong_turns": wrong_turns(predicted, truth),
+            "resources": sampler.report(),
+        }
+        score = results[key]["score"]
+        print(
+            f"  {title}: {first_s:.1f} s and {second_s:.1f} s per 15 turns, {score['labelled']} of 30 labelled, "
+            f"{score['wrong']} wrong (turns {results[key]['wrong_turns'] or 'none'}), {score['unknown']} Unknown"
+            + (f", rejected: {results[key]['rejected_because']}" if results[key]["rejected_because"] else "")
+        )
+    return results
 
 
 def run_blocks(
@@ -1042,12 +1165,13 @@ def recommend(results: dict) -> list[str]:
             f"Labelling during block recording: {labelling.get('batches', 0)} batches, {labelling.get('invalid', 0)} rejected, "
             f"live text {slower:+.1f} s slower, lowest free memory {concurrent_blocks['resources'].get('mem_available_min_mb')} MB."
         )
-    compact = results.get("speaker_labels_compact")
-    if compact and compact.get("score"):
-        score = compact["score"]
+    for key, entry in (results.get("speaker_label_formats") or {}).items():
+        if not isinstance(entry, dict) or "score" not in entry:
+            continue
+        score = entry["score"]
         advice.append(
-            f"One-letter speaker labels: {compact['first_15_s']:.0f} s per 15 turns, {score['labelled']} of "
-            f"{score['turns']} labelled, {score['accuracy_of_labelled']:.0%} of those correct."
+            f"Speaker labels, {key} format: {entry['first_15_s']:.0f} s per 15 turns, {score['labelled']} of "
+            f"{score['turns']} labelled, {score['wrong']} wrong, {score['unknown']} Unknown."
         )
     base = results.get("whole_file_live_model")
     final = results.get("final")
@@ -1056,14 +1180,40 @@ def recommend(results: dict) -> list[str]:
             f"Accuracy on the whole file: {results['live_model']} {base['wer']:.0%} word errors in {base['seconds']:.0f} s, "
             f"{results['final_model']} {final['wer']:.0%} in {final['seconds']:.0f} s."
         )
-    labels = results.get("speaker_labels")
-    if labels and labels.get("score"):
-        score = labels["score"]
-        advice.append(
-            f"Speaker suggestions: {score['labelled']} of {score['turns']} turns labelled, "
-            f"{score['accuracy_of_labelled']:.0%} of those correct, {score['unknown']} left Unknown."
-        )
+
     return advice
+
+
+def save(results: dict, out_dir: Path, prefix: str = "bench") -> None:
+    out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    out = out_dir / f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out.write_text(json.dumps(results, indent=2))
+    os.chmod(out, 0o600)
+    print(f"\nFull results: {out}  (paste this file's contents back for the next stage)")
+
+
+def labels_only(args: argparse.Namespace, env: dict[str, str]) -> None:
+    """Just the speaker-label formats, with nothing else loaded (Whisper stays off)."""
+    ollama = Ollama(env.get("AIRSOAP_OLLAMA_URL", "http://127.0.0.1:11434"))
+    try:
+        installed = ollama.installed()
+    except (urllib.error.URLError, OSError):
+        sys.exit(f"Ollama is not answering at {ollama.url}: systemctl status ollama")
+    if args.speaker_model not in installed:
+        sys.exit(f"{args.speaker_model} is not installed; see `ollama list`.")
+    ollama.unload(env.get("AIRSOAP_OLLAMA_MODEL", "qwen2.5:3b-instruct"))
+    results: dict = {"started": time.strftime("%Y-%m-%d %H:%M:%S"), "throttled_before": throttled()}
+    section(f"Speaker-label formats with {args.speaker_model} (30 fictional turns)")
+    try:
+        results["speaker_label_formats"] = run_label_formats(ollama, args.speaker_model)
+    finally:
+        ollama.unload(args.speaker_model)
+    results["throttled_after"] = throttled()
+    results["recommendations"] = recommend(results)
+    section("Recommendations")
+    for line in results["recommendations"]:
+        print(f"  - {line}")
+    save(results, args.out, "labels")
 
 
 def main() -> None:
@@ -1071,7 +1221,9 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--audio", type=Path, required=True, help="16 kHz mono WAV of the fictional consultation"
+        "--audio",
+        type=Path,
+        help="16 kHz mono WAV of the fictional consultation (not needed with --labels-only)",
     )
     parser.add_argument("--env-file", type=Path, default=ENV_FILE)
     parser.add_argument("--speaker-model", default=SPEAKER_MODEL)
@@ -1084,12 +1236,20 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true", help="fewer window sizes and one live setting")
     parser.add_argument("--skip-qwen", action="store_true", help="transcription only")
     parser.add_argument(
+        "--labels-only", action="store_true", help="only compare the speaker-label formats (a few minutes)"
+    )
+    parser.add_argument(
         "--show-text", action="store_true", help="print the (fictional) transcript as it is confirmed"
     )
     parser.add_argument("--out", type=Path, default=Path.home() / "airsoap-bench")
     args = parser.parse_args()
 
     env = read_env(args.env_file)
+    if args.labels_only:
+        labels_only(args, env)
+        return
+    if args.audio is None:
+        parser.error("--audio is required (or use --labels-only)")
     binary = env.get("AIRSOAP_WHISPER_SERVER_PATH")
     model = env.get("AIRSOAP_WHISPER_MODEL_PATH")
     if not binary or not model:
@@ -1205,48 +1365,7 @@ def main() -> None:
             )
         else:
             section(f"E. Speaker roles with {args.speaker_model}")
-            truth = [speaker for speaker, _ in DIALOGUE]
-            turns = [(f"t{i}", text) for i, (_, text) in enumerate(DIALOGUE)]
-            texts = [text for _, text in DIALOGUE]
-            load = ollama.tiny(args.speaker_model)
-            print(f"  loading the model {load:.1f} s")
-            with ResourceSampler() as sampler:
-                c_first_s, c_first, c_first_reason = ollama.label_compact(args.speaker_model, texts[:15], [])
-                c_second_s, c_second, c_second_reason = ollama.label_compact(
-                    args.speaker_model,
-                    texts[15:],
-                    list(zip(texts[:15], c_first or ["unknown"] * 15, strict=True)),
-                )
-            compact = (c_first or ["unknown"] * 15) + (c_second or ["unknown"] * (len(texts) - 15))
-            results["speaker_labels_compact"] = {
-                "model_load_s": round(load, 2),
-                "first_15_s": round(c_first_s, 2),
-                "second_15_with_context_s": round(c_second_s, 2),
-                "rejected_because": [r for r in (c_first_reason, c_second_reason) if r],
-                "score": score_labels(compact, truth),
-                "resources": sampler.report(),
-            }
-            print(
-                f"  one letter per turn: {c_first_s:.1f} s and {c_second_s:.1f} s for 15 turns each, "
-                f"{results['speaker_labels_compact']['score']}"
-            )
-            with ResourceSampler() as sampler:
-                cold, first, first_reason = ollama.label(args.speaker_model, turns[:15], [])
-                warm, second, second_reason = ollama.label(
-                    args.speaker_model,
-                    turns[15:],
-                    [(i, t, s) for (i, t), s in zip(turns[:15], first or ["unknown"] * 15, strict=True)],
-                )
-            predicted = (first or ["unknown"] * 15) + (second or ["unknown"] * (len(turns) - 15))
-            results["speaker_labels"] = {
-                "cold_s": round(cold, 2),
-                "warm_s": round(warm, 2),
-                "valid_answers": int(first is not None) + int(second is not None),
-                "rejected_because": [r for r in (first_reason, second_reason) if r],
-                "score": score_labels(predicted, truth),
-                "resources": sampler.report(),
-            }
-            print(f"  object per turn (previous format): {cold:.1f} s and {warm:.1f} s for 15 turns each")
+            results["speaker_label_formats"] = run_label_formats(ollama, args.speaker_model)
             ollama.unload(args.speaker_model)
             to_soap = ollama.tiny(soap_model)
             back = ollama.tiny(args.speaker_model)
@@ -1277,11 +1396,7 @@ def main() -> None:
             f"  - The Pi throttled (vcgencmd {results['throttled_after']}): improve cooling before trusting these numbers."
         )
 
-    args.out.mkdir(mode=0o700, parents=True, exist_ok=True)
-    out = args.out / f"bench-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    out.write_text(json.dumps(results, indent=2))
-    os.chmod(out, 0o600)
-    print(f"\nFull results: {out}  (paste this file's contents back for the next stage)")
+    save(results, args.out)
 
 
 if __name__ == "__main__":
