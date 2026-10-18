@@ -26,7 +26,7 @@ export function CompletionScreen({ submission, onReturn }: CompletionScreenProps
       />
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="rounded-(--radius-panel) bg-accent-soft p-6 text-accent-ink sm:p-10">
+        <section className="wash overflow-hidden rounded-[10px] p-6 text-ink sm:p-10">
           <svg viewBox="0 0 56 56" className="mb-6 size-14" aria-hidden>
             <circle cx="28" cy="28" r="26" fill="var(--color-accent)" className="arrive" />
             <path

@@ -193,3 +193,27 @@ html {
 button:not(:disabled):active {
   transform: scale(0.98);
 }
+
+/*
+ * The wash: a soft fade from sky blue (top left) through a pale grey-blue to a warm cream glow
+ * (right), the brand's quiet backdrop. Layered radial gradients, no images and no blur filter,
+ * so it costs nothing to paint and stays sharp at any size. The strong version is for the
+ * sign-in page; the soft one sits behind sidebars where small grey text must stay readable.
+ */
+.wash {
+  background-color: #d6e1e7;
+  background-image:
+    radial-gradient(60% 75% at 0% 0%, #8db2cb 0%, rgb(141 178 203 / 0) 72%),
+    radial-gradient(45% 55% at 100% 42%, #f7efdd 0%, rgb(247 239 221 / 0) 75%),
+    radial-gradient(70% 60% at 0% 100%, #b4c7d4 0%, rgb(180 199 212 / 0) 70%),
+    radial-gradient(55% 60% at 100% 100%, #a6c6d3 0%, rgb(166 198 211 / 0) 72%),
+    linear-gradient(135deg, #a9c4d6 0%, #d8e1e5 48%, #eceae2 100%);
+}
+
+.wash-soft {
+  background-color: #e4ebef;
+  background-image:
+    radial-gradient(90% 45% at 0% 0%, #d6e4ed 0%, rgb(214 228 237 / 0) 75%),
+    radial-gradient(80% 40% at 100% 100%, #f3eee2 0%, rgb(243 238 226 / 0) 75%),
+    linear-gradient(170deg, #e2eaef 0%, #e6ecef 55%, #ebece8 100%);
+}

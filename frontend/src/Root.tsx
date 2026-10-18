@@ -109,7 +109,7 @@ function SessionRouter({ services: provided }: RootProps) {
 
   if (state.status === 'checking') {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-ground text-ink-2">
+      <div className="wash flex min-h-dvh items-center justify-center text-ink">
         <p className="flex items-center gap-2 text-[15px]" role="status">
           <Spinner className="size-4" /> Checking your session…
         </p>
@@ -119,7 +119,7 @@ function SessionRouter({ services: provided }: RootProps) {
 
   if (state.status === 'unreachable') {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-ground px-5">
+      <div className="wash flex min-h-dvh items-center justify-center px-5">
         <div className="w-full max-w-lg">
           <Alert
             tone="error"

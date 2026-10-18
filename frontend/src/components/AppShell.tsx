@@ -93,7 +93,7 @@ function MobileBar({
 }) {
   const age = encounter ? calculateAge(encounter.patient.dateOfBirth) : null
   return (
-    <header className="bg-rail px-5 pt-4 pb-4 lg:hidden">
+    <header className="wash-soft px-5 pt-4 pb-4 lg:hidden">
       <div className="flex items-center justify-between gap-4">
         <Logo size="sm" />
         {account && <MobileSignOut account={account} />}
@@ -131,7 +131,7 @@ export function AppShell({ status, encounter, account, children }: AppShellProps
   const current = STEP_INDEX[status]
   return (
     <div className="min-h-dvh bg-ground text-ink">
-      <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto bg-rail px-5 py-7 lg:flex">
+      <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto wash-soft px-5 py-7 lg:flex">
         <div className="px-3">
           <Logo subtitle="Clinical workspace" />
         </div>

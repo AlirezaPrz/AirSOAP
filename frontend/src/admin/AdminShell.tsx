@@ -62,7 +62,7 @@ function AdminReference() {
 function AdminShell({ account, children }: { account: AccountInfo; children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-ground text-ink">
-      <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto bg-rail px-5 py-7 lg:flex">
+      <aside className="fixed inset-y-0 left-0 hidden w-[272px] flex-col gap-8 overflow-y-auto wash-soft px-5 py-7 lg:flex">
         <div className="px-3">
           <Logo subtitle="Administration" />
         </div>
@@ -72,7 +72,7 @@ function AdminShell({ account, children }: { account: AccountInfo; children: Rea
         </div>
       </aside>
 
-      <header className="bg-rail px-5 py-4 lg:hidden">
+      <header className="wash-soft px-5 py-4 lg:hidden">
         <div className="flex items-center justify-between gap-4">
           <Logo size="sm" subtitle="Administration" />
           <MobileSignOut account={account} />

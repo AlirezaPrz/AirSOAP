@@ -74,7 +74,7 @@ export function Showcase() {
       onFocus={() => setHovering(true)}
       onBlur={() => setHovering(false)}
     >
-      <div className="relative min-h-[240px] flex-1 overflow-hidden rounded-(--radius-panel) bg-white">
+      <div className="relative min-h-[240px] flex-1 overflow-hidden rounded-[10px] bg-white shadow-[0_24px_60px_-30px_rgb(9_48_75/0.5)]">
         {SLIDES.map((s, i) => (
           <img
             key={s.title}
@@ -94,7 +94,7 @@ export function Showcase() {
         <p key={slide.title} className="arrive text-[22px] leading-snug font-semibold tracking-[-0.01em] text-balance text-brand-navy">
           {slide.title}
         </p>
-        <p key={`${slide.title}-body`} className="arrive arrive-1 mt-2 max-w-md text-[15px] text-ink-2">
+        <p key={`${slide.title}-body`} className="arrive arrive-1 mt-2 max-w-md text-[15px] text-ink/80">
           {slide.body}
         </p>
       </div>
@@ -110,7 +110,7 @@ export function Showcase() {
               aria-current={i === index}
               className="group flex h-6 flex-1 items-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              <span className="relative h-1 w-full overflow-hidden rounded-full bg-field transition-colors group-hover:bg-ink-3/40">
+              <span className="relative h-1 w-full overflow-hidden rounded-full bg-white/60 transition-colors group-hover:bg-white/90">
                 {i < index && <span className="absolute inset-0 bg-brand-navy" />}
                 {i === index && (
                   <span
@@ -127,7 +127,7 @@ export function Showcase() {
           type="button"
           onClick={() => setPaused((p) => !p)}
           aria-label={paused ? 'Play slides' : 'Pause slides'}
-          className="flex size-8 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-control-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex size-8 items-center justify-center rounded-full text-ink transition-colors hover:bg-white/60 focus-visible:outline-2 focus-visible:outline-accent"
         >
           {paused ? (
             <svg viewBox="0 0 24 24" className="size-4" fill="currentColor" aria-hidden>

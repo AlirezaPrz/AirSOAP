@@ -18,6 +18,9 @@ const FACTS: { title: string; body: string }[] = [
   },
 ]
 
+// The form floats above the wash, so it is the one surface here with a shadow.
+const CARD_SHADOW = 'shadow-[0_24px_60px_-28px_rgb(9_48_75/0.45)]'
+
 interface AuthLayoutProps {
   title: string
   description?: ReactNode
@@ -34,39 +37,44 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
   }, [title])
 
   return (
-    <div className="min-h-dvh bg-ground text-ink lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      <aside className="sticky top-0 hidden h-dvh flex-col gap-8 bg-rail px-10 py-10 lg:flex xl:px-12">
-        <img src={logo} alt="AirSOAP" width={720} height={541} className="h-auto w-[150px] shrink-0" />
-        <Showcase />
-      </aside>
+    <div className="wash min-h-dvh text-ink">
+      <div className="mx-auto grid min-h-dvh max-w-[1320px] gap-10 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)] lg:items-center lg:gap-16 lg:px-12 lg:py-12 xl:gap-24">
+        <div className="hidden h-full max-h-[860px] min-h-[620px] flex-col gap-8 lg:flex">
+          <img src={logo} alt="AirSOAP" width={720} height={541} className="h-auto w-[148px] shrink-0" />
+          <Showcase />
+        </div>
 
-      <header className="bg-rail px-5 py-4 sm:px-8 lg:hidden">
-        <Logo size="sm" />
-      </header>
+        <header className="lg:hidden">
+          <Logo size="sm" />
+        </header>
 
-      <main className="flex items-start justify-center px-5 py-10 sm:px-8 lg:items-center lg:py-12">
-        {/* key: each step of signing in arrives instead of swapping in place */}
-        <div key={title} className="arrive w-full max-w-[420px]">
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-balance focus:outline-none"
+        <main className="flex flex-col justify-center">
+          {/* key: each step of signing in arrives instead of swapping in place */}
+          <div
+            key={title}
+            className={`arrive w-full rounded-[10px] bg-surface px-6 py-8 sm:px-10 sm:py-10 ${CARD_SHADOW}`}
           >
-            {title}
-          </h1>
-          {description && <div className="mt-2 text-base text-ink-2">{description}</div>}
-          <div className="mt-8">{children}</div>
-          {footer && <div className="mt-8 text-[15px] text-ink-2">{footer}</div>}
-          <dl className="mt-12 space-y-3 text-sm lg:hidden">
+            <h1
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-balance focus:outline-none"
+            >
+              {title}
+            </h1>
+            {description && <div className="mt-2 text-base text-ink-2">{description}</div>}
+            <div className="mt-8">{children}</div>
+            {footer && <div className="mt-8 text-[15px] text-ink-2">{footer}</div>}
+          </div>
+          <dl className="mt-8 space-y-3 px-1 text-sm lg:hidden">
             {FACTS.map((fact) => (
               <div key={fact.title}>
-                <dt className="font-semibold text-ink-2">{fact.title}</dt>
-                <dd className="text-ink-3">{fact.body}</dd>
+                <dt className="font-semibold text-ink">{fact.title}</dt>
+                <dd className="text-ink-2">{fact.body}</dd>
               </div>
             ))}
           </dl>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }

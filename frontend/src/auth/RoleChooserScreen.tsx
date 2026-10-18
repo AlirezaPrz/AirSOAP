@@ -73,11 +73,11 @@ export function RoleChooserScreen({ auth, session, onChosen, onSignOut }: RoleCh
               type="button"
               onClick={() => choose(role)}
               disabled={pending !== null}
-              className="group flex w-full items-center gap-4 rounded-(--radius-panel) bg-surface px-5 py-4 text-left transition-colors hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
+              className="group flex w-full items-center gap-4 rounded-(--radius-panel) bg-sunken px-5 py-4 text-left transition-colors hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
             >
               <span
                 aria-hidden
-                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent transition-colors group-hover:bg-accent group-hover:text-white"
+                className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface text-accent transition-colors group-hover:bg-accent group-hover:text-white"
               >
                 <Icon className="size-5" />
               </span>
