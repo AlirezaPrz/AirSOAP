@@ -6,6 +6,7 @@ import { Root } from './Root'
 import type { Services } from './api'
 import { createMockAuthApi } from './api/auth'
 import { createMockApi } from './api/mockClient'
+import { fillTestPatient } from './test/patient'
 
 const services = (): Services => ({
   api: createMockApi({ latencyScale: 0 }),
@@ -36,7 +37,7 @@ describe('what the AI sees', () => {
     const preview = screen.getByRole('region', { name: 'What the AI sees' })
     expect(within(preview).getAllByText('not entered')).toHaveLength(3)
 
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     expect(within(preview).getByText('Jordan Testpatient')).toHaveClass('line-through')
     expect(within(preview).getByText(/^\d+ years$/)).toBeInTheDocument()
     expect(within(preview).getByText('Acute visit')).toBeInTheDocument()
@@ -47,7 +48,7 @@ describe('labelling speakers', () => {
   it('labels alternating turns in one click and tracks progress in the steps bar', async () => {
     const user = userEvent.setup()
     render(<App api={createMockApi({ latencyScale: 0 })} />)
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await user.click(await screen.findByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))
@@ -70,7 +71,7 @@ describe('labelling speakers', () => {
   it('fills the remaining unknown turns', async () => {
     const user = userEvent.setup()
     render(<App api={createMockApi({ latencyScale: 0 })} />)
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await user.click(await screen.findByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))

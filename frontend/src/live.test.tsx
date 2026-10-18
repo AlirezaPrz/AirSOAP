@@ -9,6 +9,7 @@ import type { LiveSnapshot } from './api/types'
 import { LiveTranscript } from './components/LiveTranscript'
 import { createMockTranscript } from './mocks/encounter'
 import { initialWorkflowState, workflowReducer, type Draft, type WorkflowAction, type WorkflowState } from './workflow/reducer'
+import { fillTestPatient } from './test/patient'
 
 const transcript = createMockTranscript()
 const encounter = {
@@ -183,7 +184,7 @@ describe('an encounter with live transcription (demo backend)', () => {
   it('shows the transcript while recording, then suggests speakers in review', async () => {
     const user = userEvent.setup()
     render(<App api={createMockApi({ latencyScale: 0.02 })} />)
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await user.click(await screen.findByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))

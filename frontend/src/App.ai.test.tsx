@@ -11,6 +11,7 @@ import type {
   SoapGenerationRequest,
   SoapGenerationResponse,
 } from './api/types'
+import { fillTestPatient } from './test/patient'
 
 type User = ReturnType<typeof userEvent.setup>
 
@@ -98,7 +99,7 @@ function setup() {
 }
 
 async function reachReview(user: User) {
-  await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+  await fillTestPatient(user)
   await user.click(screen.getByRole('button', { name: 'Start encounter' }))
   await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
   await user.click(screen.getByRole('checkbox', { name: /consented/i }))

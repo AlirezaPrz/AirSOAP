@@ -5,6 +5,7 @@ import { Root } from './Root'
 import { createDefaultServices, type Services } from './api'
 import { createMockAuthApi, type AuthApi, type Session } from './api/auth'
 import { createMockApi } from './api/mockClient'
+import { fillTestPatient } from './test/patient'
 
 function mockServices(auth: AuthApi = createMockAuthApi()): Services {
   return { api: createMockApi({ latencyScale: 0 }), auth, onSessionEnded: () => () => {} }
@@ -135,7 +136,7 @@ describe('signing in (demo backend)', () => {
   it('asks before signing out of an encounter in progress', async () => {
     render(<Root services={mockServices()} />)
     const user = await signIn('doctor@example.test')
-    await user.click(await screen.findByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
 
@@ -154,7 +155,7 @@ describe('signing in (demo backend)', () => {
   it('a new sign-in starts from a clean workspace', async () => {
     render(<Root services={mockServices()} />)
     let user = await signIn('doctor@example.test')
-    await user.click(await screen.findByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
     await user.click(within(screen.getByRole('region', { name: 'Signed in' })).getByRole('button', { name: 'Sign out' }))
@@ -255,7 +256,7 @@ describe('the session against the backend', () => {
     })
     const user = userEvent.setup()
     render(<Root services={createDefaultServices({ VITE_AIRSOAP_API: 'http' })} />)
-    await user.click(await screen.findByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
     await user.click(screen.getByRole('checkbox', { name: /consented/i }))
@@ -275,7 +276,7 @@ describe('the session against the backend', () => {
     })
     const user = userEvent.setup()
     render(<Root services={createDefaultServices({ VITE_AIRSOAP_API: 'http' })} />)
-    await user.click(await screen.findByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await user.click(await screen.findByRole('checkbox', { name: /consented/i }))
     await user.click(screen.getByRole('button', { name: /start recording/i }))

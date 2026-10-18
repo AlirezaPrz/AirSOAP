@@ -3,21 +3,12 @@ import type {
   AiSegment,
   ClinicalReview,
   ClinicalReviewRequest,
-  EncounterType,
-  PatientIdentity,
   ReviewSuggestion,
   SoapGenerationContext,
   SoapNote,
   Speaker,
   Transcript,
 } from '../api/types'
-
-export const SAMPLE_PATIENT: PatientIdentity & { encounterType: EncounterType } = {
-  fullName: 'Jordan Testpatient',
-  dateOfBirth: '1991-04-12',
-  mrn: 'DEMO-000123',
-  encounterType: 'acute',
-}
 
 /** Who really spoke each line. The mock transcript hides this, like real Whisper output: speakers start `unknown`. */
 const SCRIPT: ReadonlyArray<[Speaker, string]> = [

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import type { SoapGenerationRequest } from './api/types'
 import { createMockApi, type MockAirSoapApi } from './api/mockClient'
+import { fillTestPatient } from './test/patient'
 
 let api: MockAirSoapApi
 
@@ -16,7 +17,7 @@ afterEach(() => {
 })
 
 async function startEncounter(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+  await fillTestPatient(user)
   await user.click(screen.getByRole('button', { name: 'Start encounter' }))
   await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
 }
@@ -136,7 +137,7 @@ describe('AirSOAP workflow', () => {
     const transcribe = vi.spyOn(api, 'transcribe')
     render(<App api={api} />)
 
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'transcription')
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await recordAndStop(user)
@@ -153,7 +154,7 @@ describe('AirSOAP workflow', () => {
     const user = userEvent.setup()
     render(<App api={api} />)
 
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'soap-generation')
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await reachReview(user)
@@ -176,7 +177,7 @@ describe('AirSOAP workflow', () => {
     const user = userEvent.setup()
     render(<App api={api} />)
 
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.selectOptions(screen.getByRole('combobox', { name: /simulate a service failure/i }), 'submission')
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await reachReview(user)

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { createHttpApi } from './api/httpClient'
+import { fillTestPatient } from './test/patient'
 
 const REC = 'a'.repeat(32)
 const JOB = 'b'.repeat(32)
@@ -106,7 +107,7 @@ describe('AirSOAP workflow against the backend', () => {
     render(<App api={createHttpApi({ fetch: fetch as unknown as typeof globalThis.fetch, pollIntervalMs: 1 })} />)
 
     expect(screen.queryByRole('combobox', { name: /simulate a service failure/i })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Use sample patient' }))
+    await fillTestPatient(user)
     await user.click(screen.getByRole('button', { name: 'Start encounter' }))
     await screen.findByRole('heading', { level: 1, name: 'Ready to record' })
     expect(screen.getByText(/microphone on this device records the visit/i)).toBeInTheDocument()

@@ -5,7 +5,6 @@ import { Button } from '../components/Button'
 import { CheckIcon, ChevronDownIcon, XIcon } from '../components/icons'
 import { PageHeader, Panel, inputClass, labelClass } from '../components/ui'
 import { ENCOUNTER_TYPE_LABELS } from '../lib/format'
-import { SAMPLE_PATIENT } from '../mocks/encounter'
 import { calculateAge, toModelAge } from '../workflow/privacy'
 import type { StartEncounterInput } from '../workflow/useEncounterWorkflow'
 import {
@@ -170,13 +169,6 @@ export function DashboardScreen({ onStart, showDemoControls }: DashboardScreenPr
     )
   }
 
-  const fillSample = () => {
-    const { encounterType, mrn = '', ...rest } = SAMPLE_PATIENT
-    const sample = { ...rest, mrn, encounterType }
-    setValues(sample)
-    if (submitted) setErrors(validatePatientForm(sample))
-  }
-
   const age = errors.dateOfBirth ? null : calculateAge(values.dateOfBirth)
   const fieldId = (field: FieldName) => `${id}-${field}`
   const errorId = (field: FieldName) => `${id}-${field}-error`
@@ -195,11 +187,6 @@ export function DashboardScreen({ onStart, showDemoControls }: DashboardScreenPr
       <PageHeader
         title="New encounter"
         description="Identify the patient, then record the visit. Use fictional details only."
-        actions={
-          <Button variant="secondary" onClick={fillSample}>
-            Use sample patient
-          </Button>
-        }
       />
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
