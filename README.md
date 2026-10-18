@@ -184,6 +184,18 @@ The full, step-by-step guide is in [`backend/README.md`](backend/README.md). In 
 - Other languages, and automatic language detection.
 - Benchmarking a faster or quantized `small.en`, or a newer small model, to bring live accuracy closer to whole-file accuracy.
 
+**Hardware acceleration**
+- **An AI accelerator add-on for the Pi** (a Raspberry Pi AI HAT or similar). Today everything runs on the Pi's CPU, which is why a visit has to be transcribed in pause-cut blocks, why the 3B model takes a minute or more per task, and why the Pi runs hot. An accelerator could run speech and language models faster and with less heat, which would allow a larger or more accurate model, live transcription with the `small.en` model, and speaker suggestions during the visit. Caveats: these boards are neural accelerators (NPUs), not general GPUs, and the common Whisper and Ollama builds used here run on the CPU, so the models would need to be converted to the accelerator's own format and runtime. Support for language models differs between boards, so check the current board and software before buying.
+- **A device with a real GPU**, such as an NVIDIA Jetson, a small mini-PC with a graphics card, or a Mac mini (Apple silicon). The same backend would run there with a larger model and much shorter waits. The benchmark script (`backend/scripts/bench_live.py`) can measure any candidate device in the same way it measured the Pi.
+- **More memory.** A Pi 5 with 8 GB of RAM could keep the live model and the note model loaded together and avoid the 30 s model switches.
+- **Better cooling and an enclosure**, since sustained transcription already brings the Pi close to its throttling temperature.
+
+**Model quality and fine-tuning**
+- **Fine-tuning the language model for clinical notes.** A model adapted to SOAP notes (for example with LoRA, trained on a workstation and then converted for the Pi) could follow the "only what was said" rules more reliably, word notes the way a clinic prefers, and label speakers better.
+- **Fine-tuning Whisper on medical speech**, to reduce errors on drug names, anatomy and numbers.
+- **Training data has to be handled with care.** Fine-tuning on real medical records needs consent, ethics or institutional approval, and thorough de-identification, and must not happen on the clinic's device or with patient data from this app, which deliberately stores none. Safer starting points are synthetic consultations and published research datasets for clinical dialogue and note generation, each used under its own licence and access terms.
+- **Measure before and after.** Any new or fine-tuned model should be scored on a fixed set of fictional consultations (accuracy, invented content, "Not documented" behaviour) before it replaces the current one.
+
 **AI quality**
 - Evaluating the SOAP and clinical-review prompts against a larger set of fictional consultations, with scoring in CI.
 - Benchmarking the 3B model's speaker suggestions on the Pi, and trying a larger model on faster hardware.
