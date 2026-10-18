@@ -197,12 +197,14 @@ class JobManager:
 
     async def _process(self, job: Job) -> None:
         started = self._clock()
+        source = "whole-file"
         try:
             result = None
             if job.live is not None:
                 # The live transcript is the final transcript: only its last stretch is left to do.
                 result = await job.live.finish(job.audio_duration_ms)
                 job.fallback = result is None
+                source = "whole-file (live failed)" if job.fallback else "live"
             if result is None:
                 # No live transcript (or it failed): transcribe the whole file, as before Phase 6.
                 # Only one heavy job runs at a time, and Qwen is unloaded before whisper-server starts.
@@ -228,7 +230,7 @@ class JobManager:
             logger.info(
                 "job=%s completed source=%s audio_ms=%d elapsed_ms=%d realtime_factor=%.2f segments=%d",
                 job.id,
-                "live" if job.live is not None and not job.fallback else "whole-file",
+                source,
                 job.audio_duration_ms,
                 elapsed_ms,
                 ratio,

@@ -177,6 +177,12 @@ Everything is set with environment variables. On the Pi they live in `~/.config/
 | `AIRSOAP_AUDIT_RETENTION_DAYS` | `365` | Days to keep audit events |
 | `AIRSOAP_TRUSTED_PROXIES` | `127.0.0.1` | Proxies whose `X-Forwarded-For` is believed (Caddy on the same Pi), so rate limits see the real client address |
 | `AIRSOAP_API_DOCS` | `false` | Serve `/docs` and `/openapi.json` (development only) |
+| `AIRSOAP_LIVE` | `auto` | `auto`: live transcription when a live model is set (simulated on the Mac); `off`: whole-file only |
+| `AIRSOAP_LIVE_WHISPER_MODEL_PATH` | unset | The live model, e.g. `ggml-base.en.bin`. Needs `AIRSOAP_WHISPER_SERVER_PATH` |
+| `AIRSOAP_LIVE_WHISPER_URL` | `http://127.0.0.1:8179` | The live whisper-server's loopback address (its own port) |
+| `AIRSOAP_LIVE_PAUSE_MS` | `600` | A pause this long ends a stretch of speech |
+| `AIRSOAP_LIVE_MAX_BLOCK_SECONDS` | `15` | Cut a stretch with no pause after this long |
+| `AIRSOAP_LIVE_BEHIND_SECONDS` | `15` | Show "running behind" past this backlog |
 | `AIRSOAP_MOCK_TRANSCRIBE_SECONDS` | `2` | Simulated transcription time in mock mode |
 
 The optional always-on unit (`deploy/whisper-server.service`) reads `WHISPER_MODEL`, `WHISPER_PORT` and `WHISPER_THREADS` from the same file; the default on-demand mode doesn't use it.
@@ -461,6 +467,24 @@ cd frontend && VITE_AIRSOAP_API=http npm run dev
 
 Open http://localhost:5173 in Chrome or Firefox (they accept the HTTPS-only cookie on `localhost`; Safari does not). If port 8000 is busy on the Mac, use `-L 8001:127.0.0.1:8000` and start Vite with `AIRSOAP_BACKEND_URL=http://127.0.0.1:8001`.
 
+
+## Live transcription (Phase 6)
+
+While the visit is being recorded, the transcript appears on the recording screen a few seconds after each pause. That live transcript **is** the final transcript: there is no second, slower pass after Stop, so review starts almost at once.
+
+How it works:
+- `arecord` writes the WAV exactly as before. A live worker reads the growing file and cuts it at the end of each stretch of speech (a pause of `AIRSOAP_LIVE_PAUSE_MS`, 600 ms by default). If nobody pauses for `AIRSOAP_LIVE_MAX_BLOCK_SECONDS` (15 s), it cuts at the quietest moment, so a long monologue still appears.
+- Each stretch is sent **once**, at full context, to a second whisper-server running **base.en** on `127.0.0.1:8179`. Silence is skipped and never sent, so Whisper cannot invent "Thank you." on silence. That server is loaded when recording starts and stopped when it ends; Qwen is unloaded while recording.
+- The browser follows `GET /api/recording/{id}/live`, a server-sent event stream that sends the whole transcript so far with an honest status: listening, transcribing, **behind** (more than `AIRSOAP_LIVE_BEHIND_SECONDS` waiting) or **failed**. It reconnects by itself. Only the clinician who started the recording can follow it.
+- **Stop** transcribes the last stretch (a few seconds) and completes the usual transcription job, so review works as before. The audio is deleted as before.
+- **If live transcription fails** (for example whisper-server stops answering), the screen says so, the recording carries on, and Stop transcribes the whole file with small.en instead. Nothing is lost.
+- Cancel, sign-out, session expiry and shutdown stop the live worker and keep nothing. Logs hold IDs, block lengths and timings, never transcript text.
+
+On the Pi benchmarks (100 s fictional consultation), base.en in this mode showed text about 4 s after each pause, 8% word errors (small.en on the whole file: 6%), at 56% CPU. Expect more errors on medical words and numbers than with small.en; the clinician corrects the transcript in review.
+
+**Speakers.** Whisper cannot tell voices apart, so turns arrive as Unknown. In review, **Suggest speakers** asks the 3B model (the one that drafts the SOAP note) to label each turn Clinician, Patient or Unknown from the words alone, in batches of 25. It is a suggestion: labels are marked **AI** until the clinician confirms them (**Accept** or choosing a speaker), labels the clinician set are never replaced, a turn edited while the suggestion was running keeps its label, and anything the model is not sure of stays Unknown. The 1.5B model was tested for this and rejected: it mostly assumed speakers alternate.
+
+To turn live transcription off, remove `AIRSOAP_LIVE_WHISPER_MODEL_PATH` from the env file (or set `AIRSOAP_LIVE=off`) and restart: recording goes back to whole-file transcription.
 
 ## Live transcription benchmark (Phase 6, stage 0)
 

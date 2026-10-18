@@ -6,6 +6,7 @@ import type {
   ProcessingStage,
   SoapField,
   SoapNote,
+  Speaker,
   SoapWarning,
   Transcript,
   TranscriptSegment,
@@ -34,6 +35,15 @@ export interface ClinicalReviewState {
   dismissed: string[]
 }
 
+export interface SpeakerSuggestionState {
+  status: 'idle' | 'running' | 'failed'
+  /** The latest request; answers carrying any other ID are ignored. */
+  requestId: number
+  message: string | null
+  /** How many labels the last answer filled in (clinician choices and edited turns are never touched). */
+  applied: number | null
+}
+
 export interface Draft {
   transcript: Transcript
   soap: SoapNote
@@ -41,6 +51,7 @@ export interface Draft {
   warnings: SoapWarning[]
   soapGeneration: SoapGenerationState
   review: ClinicalReviewState
+  speakers: SpeakerSuggestionState
   /** Counts every clinician edit to the transcript or note; tells whether a review is out of date. */
   version: number
 }
@@ -54,7 +65,15 @@ export interface ProcessingError {
 export type WorkflowState =
   | { status: 'idle' }
   | { status: 'ready'; encounter: Encounter }
-  | { status: 'recording'; encounter: Encounter; recordingId: string; startedAt: number }
+  | {
+      status: 'recording'
+      encounter: Encounter
+      recordingId: string
+      startedAt: number
+      /** The transcript is being produced while recording. */
+      live?: boolean
+      liveSimulated?: boolean
+    }
   | {
       status: 'processing'
       encounter: Encounter
@@ -82,7 +101,14 @@ export type StateOf<S extends WorkflowStatus> = Extract<WorkflowState, { status:
 
 export type WorkflowAction =
   | { type: 'START_ENCOUNTER'; encounter: Encounter }
-  | { type: 'RECORDING_STARTED'; encounterId: string; recordingId: string; startedAt: number }
+  | {
+      type: 'RECORDING_STARTED'
+      encounterId: string
+      recordingId: string
+      startedAt: number
+      live?: boolean
+      liveSimulated?: boolean
+    }
   | { type: 'RECORDING_STOPPED'; recordingId: string }
   | { type: 'PROCESSING_PROGRESS'; stage: ProcessingStage; progress: number | null }
   | { type: 'TRANSCRIPT_READY'; transcript: Transcript }
@@ -99,6 +125,16 @@ export type WorkflowAction =
   | { type: 'REVIEW_FAILED'; requestId: number; message: string }
   | { type: 'REVIEW_CANCELLED' }
   | { type: 'REVIEW_DISMISSED'; suggestionId: string }
+  | { type: 'SPEAKERS_REQUESTED'; requestId: number }
+  | {
+      type: 'SPEAKERS_SUCCEEDED'
+      requestId: number
+      suggestions: { id: string; speaker: Speaker }[]
+      /** The text of each turn as it was sent; a turn edited since then keeps its label. */
+      sentText: Record<string, string>
+    }
+  | { type: 'SPEAKERS_FAILED'; requestId: number; message: string }
+  | { type: 'SPEAKERS_CANCELLED' }
   | { type: 'REQUEST_SUBMIT' }
   | { type: 'CANCEL_SUBMIT' }
   | { type: 'CONFIRM_SUBMIT' }
@@ -148,6 +184,7 @@ function newDraft(transcript: Transcript): Draft {
     warnings: [],
     soapGeneration: { status: 'idle' },
     review: { status: 'idle', requestId: 0, message: null, result: null, dismissed: [] },
+    speakers: { status: 'idle', requestId: 0, message: null, applied: null },
     version: 0,
   }
 }
@@ -183,6 +220,8 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
         encounter: state.encounter,
         recordingId: action.recordingId,
         startedAt: action.startedAt,
+        live: action.live,
+        liveSimulated: action.liveSimulated,
       }
 
     case 'RECORDING_STOPPED':
@@ -232,8 +271,10 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
 
     case 'EDIT_TRANSCRIPT_SEGMENT': {
       if (!inReview(state)) return state
+      // A label the clinician sets is theirs: later AI suggestions never replace it.
+      const source = action.changes.speaker !== undefined ? { speakerSource: 'clinician' as const } : {}
       const segments = state.draft.transcript.segments.map((segment) =>
-        segment.id === action.segmentId ? { ...segment, ...action.changes } : segment,
+        segment.id === action.segmentId ? { ...segment, ...action.changes, ...source } : segment,
       )
       return withDraft(state, {
         transcript: { ...state.draft.transcript, segments },
@@ -303,6 +344,43 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
       return withDraft(state, {
         review: { ...state.draft.review, status: 'running', requestId: action.requestId, message: null },
       })
+
+    case 'SPEAKERS_REQUESTED':
+      if (!inReview(state) || state.draft.speakers.status === 'running') return state
+      return withDraft(state, {
+        speakers: { status: 'running', requestId: action.requestId, message: null, applied: null },
+      })
+
+    case 'SPEAKERS_SUCCEEDED': {
+      if (!inReview(state)) return state
+      const { speakers } = state.draft
+      if (speakers.status !== 'running' || speakers.requestId !== action.requestId) return state
+      const suggested = new Map(action.suggestions.map((s) => [s.id, s.speaker]))
+      let applied = 0
+      const segments = state.draft.transcript.segments.map((segment) => {
+        const speaker = suggested.get(segment.id)
+        const untouched = segment.speakerSource !== 'clinician' && action.sentText[segment.id] === segment.text
+        if (speaker === undefined || !untouched || speaker === 'unknown') return segment
+        applied += 1
+        return { ...segment, speaker, speakerSource: 'ai' as const }
+      })
+      return withDraft(state, {
+        transcript: { ...state.draft.transcript, segments },
+        speakers: { status: 'idle', requestId: speakers.requestId, message: null, applied },
+        version: applied > 0 ? state.draft.version + 1 : state.draft.version,
+      })
+    }
+
+    case 'SPEAKERS_FAILED': {
+      if (!inReview(state)) return state
+      const { speakers } = state.draft
+      if (speakers.status !== 'running' || speakers.requestId !== action.requestId) return state
+      return withDraft(state, { speakers: { ...speakers, status: 'failed', message: action.message } })
+    }
+
+    case 'SPEAKERS_CANCELLED':
+      if (!inReview(state) || state.draft.speakers.status !== 'running') return state
+      return withDraft(state, { speakers: { ...state.draft.speakers, status: 'idle', message: null } })
 
     case 'REVIEW_SUCCEEDED': {
       if (!inReview(state)) return state

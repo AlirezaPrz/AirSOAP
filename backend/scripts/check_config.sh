@@ -96,6 +96,14 @@ if [ "$lifecycle" = "on-demand" ]; then
 else
   fix "AIRSOAP_WHISPER_LIFECYCLE is '${lifecycle:-not set}', so the backend expects an always-on whisper-server on port 8178"
 fi
+live_model="$(setting AIRSOAP_LIVE_WHISPER_MODEL_PATH)"
+if [ -z "$live_model" ]; then
+  ok "live transcription: off (whole-file transcription after Stop)"
+elif [ -f "$live_model" ]; then
+  ok "live transcription: on, model $live_model"
+else
+  fix "AIRSOAP_LIVE_WHISPER_MODEL_PATH does not exist: $live_model"
+fi
 model="$(setting AIRSOAP_OLLAMA_MODEL)"
 ok "Ollama model: ${model:-qwen2.5:3b-instruct (default)}"
 
@@ -147,9 +155,9 @@ if [ -z "${AIRSOAP_CHECK_ENVIRON_FILE:-}" ] && command -v curl > /dev/null; then
     fix "Ollama does not answer on 127.0.0.1:11434: systemctl status ollama"
   fi
   if command -v ss > /dev/null; then
-    exposed="$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ':(8000|8178|11434)$' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)"
+    exposed="$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ':(8000|8178|8179|11434)$' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)"
     if [ -z "$exposed" ]; then
-      ok "backend, whisper-server and Ollama ports are bound to loopback only"
+      ok "backend, both whisper-servers and Ollama are bound to loopback only"
     else
       fix "listening beyond loopback: $(echo "$exposed" | tr '\n' ' ')"
     fi

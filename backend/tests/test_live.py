@@ -345,6 +345,7 @@ def test_the_transcript_arrives_while_recording_and_is_the_final_transcript(
     ) as client:
         started = client.post("/api/recording/start").json()
         assert started["live"] is True
+        assert started["liveSimulated"] is True  # the Mac's replayed lines are labelled as such
         recording_id = started["recordingId"]
         wait_for(lambda: len(live_of(client, recording_id).snapshot().segments) >= 1)
         events, stopped = stream_then(
@@ -372,6 +373,7 @@ def test_a_live_failure_falls_back_to_whole_file_transcription(settings, fast_mo
         live_settings(settings), transcriber=transcriber, live_transcriber_override=FakeLive(fail_on=1)
     ) as client:
         started = client.post("/api/recording/start").json()
+        assert started["liveSimulated"] is False
         events = read_stream(client, started["recordingId"])  # ends by itself when live fails
         assert events[-1]["status"] == "failed"  # said plainly, never shown as working
         stopped = client.post("/api/recording/stop", json={"recordingId": started["recordingId"]}).json()
@@ -451,3 +453,15 @@ def test_mock_recorder_writes_as_it_records(tmp_path: Path) -> None:
     assert any(audio[:speech_bytes])
     assert not any(audio[speech_bytes:])
     assert struct.calcsize("<h") == 2
+
+
+def test_the_log_says_which_transcript_was_used(settings, fast_mock_audio, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    with running_app(
+        live_settings(settings), live_transcriber_override=MockLiveTranscriber(delay_seconds=0)
+    ) as client:
+        started = client.post("/api/recording/start").json()
+        wait_for(lambda: len(live_of(client, started["recordingId"]).snapshot().segments) >= 1)
+        stopped = client.post("/api/recording/stop", json={"recordingId": started["recordingId"]}).json()
+        wait_job(client, stopped["jobId"])
+    assert "completed source=live" in caplog.text

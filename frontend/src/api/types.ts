@@ -16,6 +16,8 @@ export type Speaker = 'clinician' | 'patient' | 'unknown'
 export interface TranscriptSegment {
   id: string
   speaker: Speaker
+  /** Who set the label: the clinician, or an AI suggestion they have not confirmed. Absent: not labelled yet. */
+  speakerSource?: 'clinician' | 'ai'
   startMs: number
   endMs: number
   text: string
@@ -64,6 +66,40 @@ export interface StartRecordingRequest {
 export interface StartRecordingResponse {
   recordingId: string
   startedAt: IsoDateTime
+  /** True when the transcript is produced while recording (followLive). */
+  live?: boolean
+  /** The live text is replayed fictional lines (development without Whisper). */
+  liveSimulated?: boolean
+}
+
+/** Live transcription while recording. `failed` means live text stopped; the recording continues. */
+export type LiveStatus = 'starting' | 'listening' | 'transcribing' | 'behind' | 'failed' | 'finishing' | 'done'
+
+export interface LiveSegment {
+  id: string
+  startMs: number
+  endMs: number
+  text: string
+}
+
+/** One event on the live stream: the whole transcript so far, so a reconnect needs nothing else. */
+export interface LiveSnapshot {
+  recordingId: string
+  revision: number
+  status: LiveStatus
+  /** Recorded but not yet transcribed. */
+  behindMs: number
+  segments: LiveSegment[]
+}
+
+/** Turns to label. Identifiers are removed from the text before it leaves the browser. */
+export interface SpeakerSuggestionRequest {
+  segments: { id: string; text: string }[]
+}
+
+export interface SpeakerSuggestionResponse {
+  suggestions: { id: string; speaker: Speaker }[]
+  model: string
 }
 
 export interface StopRecordingRequest {
@@ -212,10 +248,11 @@ export interface ClinicalReviewResponse {
 /** `GET /api/ai/jobs/{jobId}`: the backend's wire format for both AI tasks. */
 export interface AiJobResponse {
   jobId: string
-  kind: 'soap' | 'clinical-review'
+  kind: 'soap' | 'clinical-review' | 'speakers'
   status: TranscriptionJobStatus
   soapResult: { soap: SoapNote; warnings: SoapWarning[] } | null
   reviewResult: ClinicalReview | null
+  speakerResult?: { suggestions: { id: string; speaker: Speaker }[] } | null
   error: ApiError | null
 }
 

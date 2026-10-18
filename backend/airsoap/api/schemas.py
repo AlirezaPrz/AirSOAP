@@ -43,6 +43,8 @@ class StartRecordingResponse(CamelModel):
     started_at: datetime
     # True when the transcript is produced while recording; follow GET /api/recording/{id}/live.
     live: bool = False
+    # True on a development machine: the live text is replayed fictional lines, not a transcript.
+    live_simulated: bool = False
 
 
 class LiveSegmentOut(CamelModel):

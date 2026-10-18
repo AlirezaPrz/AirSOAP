@@ -5,6 +5,7 @@ import type {
   PatientIdentity,
   SoapGenerationContext,
   SoapGenerationRequest,
+  SpeakerSuggestionRequest,
   SoapNote,
   Transcript,
 } from '../api/types'
@@ -105,6 +106,15 @@ function buildSegments(encounter: Encounter, transcript: Transcript): AiSegment[
     speaker,
     text: redactIdentifiers(text, encounter.patient),
   }))
+}
+
+/** What the speaker-suggestion model receives: only each turn's ID and words, identifiers removed. */
+export function buildSpeakerRequest(encounter: Encounter, transcript: Transcript): SpeakerSuggestionRequest {
+  return {
+    segments: transcript.segments
+      .map(({ id, text }) => ({ id, text: redactIdentifiers(text, encounter.patient) }))
+      .filter((segment) => segment.text.trim().length > 0),
+  }
 }
 
 /**

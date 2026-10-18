@@ -22,6 +22,8 @@ interface ReviewScreenProps {
   onCancelSubmit: () => void
   onConfirmSubmit: () => void
   onDiscard: () => void
+  onSuggestSpeakers: () => void
+  onCancelSpeakers: () => void
 }
 
 const SPEAKER_STYLES: Record<Speaker, string> = {
@@ -62,7 +64,18 @@ function SegmentEditor({
             </option>
           ))}
         </select>
-        <span className="text-sm text-ink-3 tabular-nums">{formatDuration(segment.startMs)}</span>
+        <span className="flex items-center gap-1.5 text-sm text-ink-3 tabular-nums">
+          {formatDuration(segment.startMs)}
+          {segment.speakerSource === 'ai' && (
+            <span
+              title="Suggested by AI. Choose a speaker to confirm it."
+              className="rounded-sm bg-brand-navy px-1 text-[11px] font-semibold tracking-wide text-white"
+            >
+              AI
+              <span className="sr-only"> suggestion, not confirmed</span>
+            </span>
+          )}
+        </span>
       </div>
       <label htmlFor={`${id}-text`} className="sr-only">
         Segment {index + 1} text ({speakerLabel}, {formatDuration(segment.startMs)})
@@ -76,6 +89,71 @@ function SegmentEditor({
         className="-mx-2 block w-[calc(100%+1rem)] resize-none rounded-(--radius-control) bg-transparent px-2 py-1 text-[15px] leading-relaxed text-ink transition-colors [field-sizing:content] hover:bg-sunken focus:bg-surface focus:ring-2 focus:ring-accent/40 focus:outline-none read-only:hover:bg-transparent"
       />
     </li>
+  )
+}
+
+/** "Suggest speakers": the 3B model labels turns it can tell apart from the words; the clinician checks them. */
+function SpeakerSuggestions({
+  status,
+  message,
+  applied,
+  unconfirmed,
+  onSuggest,
+  onCancel,
+  onConfirm,
+}: {
+  status: 'idle' | 'running' | 'failed'
+  message: string | null
+  applied: number | null
+  unconfirmed: number
+  onSuggest: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  if (status === 'running') {
+    return (
+      <div className="mt-3">
+        <Alert
+          tone="info"
+          action={
+            <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          }
+        >
+          <span className="flex items-center gap-2">
+            <Spinner className="size-4" />
+            Suggesting speakers from the words… A long visit can take a few minutes. You can keep editing.
+          </span>
+        </Alert>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3 space-y-2">
+      {status === 'failed' && message && <Alert tone="error">{message}</Alert>}
+      {applied !== null && unconfirmed > 0 && (
+        <p className="text-sm text-ink-2" role="status">
+          The AI suggested {applied} {applied === 1 ? 'label' : 'labels'}, marked <span className="font-semibold">AI</span>.
+          Check each one; turns it could not tell apart stay Unknown, and your own labels were kept.
+        </p>
+      )}
+      {applied === 0 && (
+        <p className="text-sm text-ink-2" role="status">
+          The AI could not tell any more speakers apart from the words alone.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onSuggest}>
+          Suggest speakers
+        </Button>
+        {unconfirmed > 0 && (
+          <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onConfirm}>
+            Accept {unconfirmed} AI {unconfirmed === 1 ? 'label' : 'labels'}
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -144,6 +222,8 @@ export function ReviewScreen({
   onCancelSubmit,
   onConfirmSubmit,
   onDiscard,
+  onSuggestSpeakers,
+  onCancelSpeakers,
 }: ReviewScreenProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
@@ -158,13 +238,20 @@ export function ReviewScreen({
   const labelled = transcript.segments.filter((segment) => segment.speaker !== 'unknown').length
   const total = transcript.segments.length
   const allLabelled = total > 0 && labelled === total
+  const unconfirmed = transcript.segments.filter((segment) => segment.speakerSource === 'ai')
+  const { speakers } = state.draft
+  const suggesting = speakers.status === 'running'
   const complete = hasContent && missing.length === 0
   const steps: { target: string; label: string; detail: string; state: StepState }[] = [
     {
       target: `${id}-transcript`,
       label: 'Label speakers',
-      detail: allLabelled ? 'Every turn labelled' : `${labelled} of ${total} turns`,
-      state: allLabelled ? 'done' : 'current',
+      detail: unconfirmed.length
+        ? `${unconfirmed.length} AI ${unconfirmed.length === 1 ? 'label' : 'labels'} to check`
+        : allLabelled
+          ? 'Every turn labelled'
+          : `${labelled} of ${total} turns`,
+      state: allLabelled && unconfirmed.length === 0 ? 'done' : 'current',
     },
     {
       target: `${id}-soap`,
@@ -185,6 +272,9 @@ export function ReviewScreen({
     transcript.segments.forEach((segment, index) =>
       onEditSegment(segment.id, { speaker: index % 2 === 0 ? 'clinician' : 'patient' }),
     )
+  /** The clinician has looked at the AI's labels and accepts them as theirs. */
+  const confirmSuggestions = () =>
+    unconfirmed.forEach((segment) => onEditSegment(segment.id, { speaker: segment.speaker }))
   const fillRemaining = (speaker: Speaker) =>
     transcript.segments.forEach((segment) => {
       if (segment.speaker === 'unknown') onEditSegment(segment.id, { speaker })
@@ -261,7 +351,18 @@ export function ReviewScreen({
                   style={{ width: `${total ? (labelled / total) * 100 : 0}%` }}
                 />
               </div>
-              {editable && !allLabelled && total > 1 && (
+              {editable && (!allLabelled || unconfirmed.length > 0) && (
+                <SpeakerSuggestions
+                  status={speakers.status}
+                  message={speakers.message}
+                  applied={speakers.applied}
+                  unconfirmed={unconfirmed.length}
+                  onSuggest={onSuggestSpeakers}
+                  onCancel={onCancelSpeakers}
+                  onConfirm={confirmSuggestions}
+                />
+              )}
+              {editable && !allLabelled && total > 1 && !suggesting && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button variant="secondary" className="h-8 px-3 text-sm" onClick={alternate}>
                     Alternate, clinician first
@@ -315,7 +416,13 @@ export function ReviewScreen({
                   <dt className="font-semibold">Never shared</dt>
                   <dd>Name, date of birth, MRN</dd>
                 </dl>
-                <Button className="mt-4" onClick={onGenerateSoap} disabled={!editable}>
+                {unconfirmed.length > 0 && (
+                  <p className="mt-3 text-sm font-medium">
+                    {unconfirmed.length} speaker {unconfirmed.length === 1 ? 'label is' : 'labels are'} AI suggestions
+                    you have not checked. The draft will use them as they are.
+                  </p>
+                )}
+                <Button className="mt-4" onClick={onGenerateSoap} disabled={!editable || suggesting}>
                   Generate SOAP note
                 </Button>
               </div>

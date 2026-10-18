@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { AirSoapApi } from './api/client'
+import { useCallback, useState } from 'react'
+import type { AirSoapApi, LiveHandlers } from './api/client'
 import { createDefaultApi } from './api'
 import { isMockApi } from './api/mockClient'
 import type { AccountInfo } from './components/AccountSummary'
@@ -39,6 +39,11 @@ export default function App({ api: providedApi, account }: AppProps) {
   const { state } = workflow
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const encounterOpen = state.status !== 'idle' && state.status !== 'completed'
+  const liveRecordingId = state.status === 'recording' && state.live ? state.recordingId : null
+  const followLive = useCallback(
+    (handlers: LiveHandlers) => (liveRecordingId && api.followLive ? api.followLive(liveRecordingId, handlers) : () => {}),
+    [api, liveRecordingId],
+  )
 
   const shellAccount: AccountInfo | undefined = account && {
     ...account,
@@ -67,6 +72,7 @@ export default function App({ api: providedApi, account }: AppProps) {
             onStartRecording={workflow.startRecording}
             onStopRecording={workflow.stopRecording}
             onCancel={workflow.cancelEncounter}
+            followLive={liveRecordingId ? followLive : undefined}
           />
         )
       case 'processing':
@@ -96,6 +102,8 @@ export default function App({ api: providedApi, account }: AppProps) {
             onCancelSubmit={workflow.cancelSubmit}
             onConfirmSubmit={workflow.confirmSubmit}
             onDiscard={workflow.cancelEncounter}
+            onSuggestSpeakers={workflow.suggestSpeakers}
+            onCancelSpeakers={workflow.cancelSpeakers}
           />
         )
       case 'completed':

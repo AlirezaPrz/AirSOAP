@@ -1,6 +1,6 @@
 import { createMockReview, createMockSoap, createMockTranscript } from '../mocks/encounter'
 import { ApiRequestError, cancelledError, type AirSoapApi, type JobOptions } from './client'
-import type { ApiError } from './types'
+import type { ApiError, LiveStatus, Speaker } from './types'
 
 export type FailableOperation = 'transcription' | 'soap-generation' | 'clinical-review' | 'submission'
 
@@ -13,6 +13,8 @@ export interface MockAirSoapApi extends AirSoapApi {
 export interface MockApiOptions {
   /** Multiplies every simulated latency. 0 resolves on the next tick (tests). */
   latencyScale?: number
+  /** Simulate live transcription while recording (default true). */
+  live?: boolean
 }
 
 const LATENCY_MS = {
@@ -22,6 +24,8 @@ const LATENCY_MS = {
   transcription: 3000,
   soapGeneration: 3500,
   clinicalReview: 2500,
+  speakerSuggestion: 1800,
+  liveLine: 2600,
   submission: 1200,
 }
 
@@ -72,7 +76,13 @@ export function isMockApi(api: AirSoapApi): api is MockAirSoapApi {
   return 'failNext' in api
 }
 
-export function createMockApi({ latencyScale = 1 }: MockApiOptions = {}): MockAirSoapApi {
+/** Simulated speaker suggestions (no model): questions look like the clinician, short replies stay unknown. */
+export function mockSpeaker(text: string): Speaker {
+  if (text.trim().split(/\s+/).length <= 2) return 'unknown'
+  return text.trim().endsWith('?') ? 'clinician' : 'patient'
+}
+
+export function createMockApi({ latencyScale = 1, live = true }: MockApiOptions = {}): MockAirSoapApi {
   const pendingFailures = new Set<FailableOperation>()
   const recordingStarts = new Map<string, number>()
 
@@ -102,7 +112,7 @@ export function createMockApi({ latencyScale = 1 }: MockApiOptions = {}): MockAi
       await wait(LATENCY_MS.startRecording, options?.signal)
       const recordingId = `rec-${crypto.randomUUID()}`
       recordingStarts.set(recordingId, Date.now())
-      return { recordingId, startedAt: new Date().toISOString() }
+      return { recordingId, startedAt: new Date().toISOString(), live, liveSimulated: live }
     },
 
     async stopRecording({ recordingId }, options) {
@@ -137,6 +147,42 @@ export function createMockApi({ latencyScale = 1 }: MockApiOptions = {}): MockAi
     async runClinicalReview(request, options) {
       await runJob('clinical-review', LATENCY_MS.clinicalReview, options)
       return { review: createMockReview(request), model: 'local-llm (mock)', generatedAt: new Date().toISOString() }
+    },
+
+    async suggestSpeakers({ segments }, options) {
+      await wait(LATENCY_MS.speakerSuggestion, options?.signal)
+      return {
+        suggestions: segments.map((segment) => ({ id: segment.id, speaker: mockSpeaker(segment.text) })),
+        model: 'local-llm (mock)',
+      }
+    },
+
+    /** Simulated: the mock transcript's lines appear one by one, as they would after each pause. */
+    followLive(recordingId, { onSnapshot, onConnection }) {
+      const lines = createMockTranscript().segments
+      let revision = 0
+      let shown = 0
+      let stopped = false
+      const emit = (status: LiveStatus) =>
+        onSnapshot({
+          recordingId,
+          revision: ++revision,
+          status,
+          behindMs: 0,
+          segments: lines.slice(0, shown).map(({ id, startMs, endMs, text }) => ({ id, startMs, endMs, text })),
+        })
+      onConnection?.('open')
+      emit('listening')
+      const interval = Math.max(50, LATENCY_MS.liveLine * latencyScale)
+      const timer = setInterval(() => {
+        if (stopped || shown >= lines.length) return
+        shown += 1
+        emit('listening')
+      }, interval)
+      return () => {
+        stopped = true
+        clearInterval(timer)
+      }
     },
 
     async submitDemo(_request, options) {

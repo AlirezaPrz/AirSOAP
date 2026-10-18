@@ -67,7 +67,12 @@ async def system_status(_session: ActiveSessionDep, services: ServicesDep) -> Sy
 async def start_recording(user: ClinicianDep, services: ServicesDep) -> StartRecordingResponse:
     active = await services.sessions.start(owner_id=user.user.id)
     return StartRecordingResponse(
-        recording_id=active.id, started_at=active.started_at, live=active.live is not None
+        recording_id=active.id,
+        started_at=active.started_at,
+        live=active.live is not None,
+        live_simulated=active.live is not None
+        and services.live is not None
+        and services.live.name == "simulated",
     )
 
 

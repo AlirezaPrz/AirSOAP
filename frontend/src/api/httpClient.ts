@@ -11,7 +11,9 @@ import type {
   AiJobResponse,
   ClinicalReviewRequest,
   DiscardRecordingRequest,
+  LiveSnapshot,
   SoapGenerationRequest,
+  SpeakerSuggestionRequest,
   StartRecordingRequest,
   StartRecordingResponse,
   StopRecordingRequest,
@@ -22,9 +24,21 @@ import type {
   TranscriptionResponse,
 } from './types'
 
+/** The part of the browser's EventSource the live view uses (replaceable in tests). */
+export interface LiveEventSource {
+  addEventListener(type: 'snapshot', listener: (event: MessageEvent<string>) => void): void
+  onopen: (() => void) | null
+  onerror: (() => void) | null
+  close(): void
+}
+
 export interface HttpApiOptions extends RequesterOptions {
   pollIntervalMs?: number
+  /** Opens the live stream; defaults to the browser's EventSource (which sends the session cookie). */
+  eventSource?: (url: string) => LiveEventSource
 }
+
+const STREAM_ENDS = new Set(['finishing', 'done', 'failed'])
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -59,7 +73,11 @@ function toTranscript(wire: NonNullable<TranscriptionJobResponse['transcript']>)
  * Talks to the local FastAPI backend for recording, transcription, SOAP generation and
  * Clinical Review. Demo submission stays local: no EMR is connected.
  */
-export function createHttpApi({ pollIntervalMs = 750, ...requesterOptions }: HttpApiOptions = {}): AirSoapApi {
+export function createHttpApi({
+  pollIntervalMs = 750,
+  eventSource = (url) => new EventSource(url) as unknown as LiveEventSource,
+  ...requesterOptions
+}: HttpApiOptions = {}): AirSoapApi {
   const recording = new Set<string>()
   // Transcription job for each stopped recording, until the job finishes.
   const jobs = new Map<string, string>()
@@ -188,6 +206,37 @@ export function createHttpApi({ pollIntervalMs = 750, ...requesterOptions }: Htt
         throw new ApiRequestError({ code: 'AI_FAILED', message: 'The AI task returned no review.', retryable: true })
       }
       return { review: job.reviewResult, model: 'local Qwen 2.5 3B', generatedAt: new Date().toISOString() }
+    },
+
+    async suggestSpeakers(request: SpeakerSuggestionRequest, options?: RequestOptions) {
+      const job = await runAiJob('/api/ai/speakers', request, options?.signal)
+      if (!job.speakerResult) {
+        throw new ApiRequestError({ code: 'AI_FAILED', message: 'The AI task returned no suggestions.', retryable: true })
+      }
+      return { suggestions: job.speakerResult.suggestions, model: 'local Qwen 2.5 3B' }
+    },
+
+    followLive(recordingId, { onSnapshot, onConnection }) {
+      const source = eventSource(`${requesterOptions.baseUrl ?? ''}/api/recording/${encodeURIComponent(recordingId)}/live`)
+      let ended = false
+      source.onopen = () => onConnection?.('open')
+      source.addEventListener('snapshot', (event) => {
+        const snapshot = JSON.parse(event.data) as LiveSnapshot
+        onSnapshot(snapshot)
+        if (STREAM_ENDS.has(snapshot.status)) {
+          // The server ends the stream here; do not let the browser reconnect to a finished recording.
+          ended = true
+          source.close()
+        }
+      })
+      // The browser reconnects by itself; every event carries the whole transcript, so nothing is lost.
+      source.onerror = () => {
+        if (!ended) onConnection?.('reconnecting')
+      }
+      return () => {
+        ended = true
+        source.close()
+      }
     },
 
     submitDemo: (submitRequest, options) => local.submitDemo(submitRequest, options),

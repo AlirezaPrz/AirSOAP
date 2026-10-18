@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, type Dispatch } from 'react'
 import { isCancellation, toApiError, type AirSoapApi } from '../api/client'
 import type { EncounterType, PatientIdentity, SoapField, TranscriptSegment } from '../api/types'
-import { buildClinicalReviewRequest, buildSoapRequest } from './privacy'
+import { buildClinicalReviewRequest, buildSoapRequest, buildSpeakerRequest } from './privacy'
 import {
   canCancel,
   getRecordingId,
@@ -72,14 +72,16 @@ export function useEncounterWorkflow(api: AirSoapApi) {
   // AI tasks run on demand while the review screen is open. Each gets a numbered request, and its
   // controller is aborted when the clinician cancels, submits or leaves, so a late answer is dropped.
   const requestCounter = useRef(0)
-  const aiControllers = useRef<{ soap: AbortController | null; review: AbortController | null }>({
-    soap: null,
-    review: null,
-  })
+  const aiControllers = useRef<{
+    soap: AbortController | null
+    review: AbortController | null
+    speakers: AbortController | null
+  }>({ soap: null, review: null, speakers: null })
   const abortAi = () => {
     aiControllers.current.soap?.abort()
     aiControllers.current.review?.abort()
-    aiControllers.current = { soap: null, review: null }
+    aiControllers.current.speakers?.abort()
+    aiControllers.current = { soap: null, review: null, speakers: null }
   }
   useEffect(() => {
     if (state.status !== 'review') abortAi()
@@ -103,14 +105,21 @@ export function useEncounterWorkflow(api: AirSoapApi) {
     async startRecording() {
       const current = stateRef.current
       if (current.status !== 'ready') return
-      const { recordingId } = await api.startRecording({ encounterId: current.encounter.id })
+      const { recordingId, live, liveSimulated } = await api.startRecording({ encounterId: current.encounter.id })
       const latest = stateRef.current
       if (latest.status !== 'ready' || latest.encounter.id !== current.encounter.id) {
         // Cancelled while the recorder was starting.
         discard(recordingId)
         return
       }
-      dispatch({ type: 'RECORDING_STARTED', encounterId: current.encounter.id, recordingId, startedAt: Date.now() })
+      dispatch({
+        type: 'RECORDING_STARTED',
+        encounterId: current.encounter.id,
+        recordingId,
+        startedAt: Date.now(),
+        live: live === true && typeof api.followLive === 'function',
+        liveSimulated: liveSimulated === true,
+      })
     },
 
     /** Rejects with an ApiRequestError if the recorder fails to stop. */
@@ -170,6 +179,39 @@ export function useEncounterWorkflow(api: AirSoapApi) {
       aiControllers.current.soap?.abort()
       aiControllers.current.soap = null
       dispatch({ type: 'SOAP_CANCELLED' })
+    },
+
+    /**
+     * Runs only when the clinician asks. Sends each turn's words (identifiers removed) and fills in
+     * labels the clinician has not set; turns edited meanwhile keep their label.
+     */
+    async suggestSpeakers() {
+      const current = stateRef.current
+      if (current.status !== 'review' || current.draft.speakers.status === 'running') return
+      const requestId = ++requestCounter.current
+      const controller = new AbortController()
+      aiControllers.current.speakers = controller
+      const request = buildSpeakerRequest(current.encounter, current.draft.transcript)
+      const sentText = Object.fromEntries(current.draft.transcript.segments.map((s) => [s.id, s.text]))
+      dispatch({ type: 'SPEAKERS_REQUESTED', requestId })
+      try {
+        const { suggestions } = await api.suggestSpeakers(request, { signal: controller.signal })
+        if (!controller.signal.aborted) dispatch({ type: 'SPEAKERS_SUCCEEDED', requestId, suggestions, sentText })
+      } catch (error) {
+        if (controller.signal.aborted || isCancellation(error)) return
+        const { message } = toApiError(error, {
+          code: 'AI_FAILED',
+          message: 'Speaker suggestions could not be made. Your labels were not changed.',
+          retryable: true,
+        })
+        dispatch({ type: 'SPEAKERS_FAILED', requestId, message })
+      }
+    },
+
+    cancelSpeakers() {
+      aiControllers.current.speakers?.abort()
+      aiControllers.current.speakers = null
+      dispatch({ type: 'SPEAKERS_CANCELLED' })
     },
 
     /** Runs only when the clinician asks. Sends the current labels and note; never changes the note. */

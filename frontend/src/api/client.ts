@@ -6,8 +6,11 @@ import type {
   DemoSubmitRequest,
   DemoSubmitResponse,
   DiscardRecordingRequest,
+  LiveSnapshot,
   SoapGenerationRequest,
   SoapGenerationResponse,
+  SpeakerSuggestionRequest,
+  SpeakerSuggestionResponse,
   StartRecordingRequest,
   StartRecordingResponse,
   StopRecordingRequest,
@@ -18,6 +21,12 @@ import type {
 
 export interface RequestOptions {
   signal?: AbortSignal
+}
+
+export interface LiveHandlers {
+  onSnapshot: (snapshot: LiveSnapshot) => void
+  /** 'reconnecting' while the connection is down; the next snapshot means it is back. */
+  onConnection?: (state: 'open' | 'reconnecting') => void
 }
 
 export interface JobOptions extends RequestOptions {
@@ -35,6 +44,10 @@ export interface AirSoapApi {
   generateSoap(request: SoapGenerationRequest, options?: RequestOptions): Promise<SoapGenerationResponse>
   /** Suggestions on the clinician's edited note. Never changes the note. */
   runClinicalReview(request: ClinicalReviewRequest, options?: RequestOptions): Promise<ClinicalReviewResponse>
+  /** Who said each turn, from the words alone. Suggestions only; the clinician confirms them. */
+  suggestSpeakers(request: SpeakerSuggestionRequest, options?: RequestOptions): Promise<SpeakerSuggestionResponse>
+  /** Follow the live transcript of a recording that started with `live: true`. Returns an unsubscribe. */
+  followLive?(recordingId: string, handlers: LiveHandlers): () => void
   submitDemo(request: DemoSubmitRequest, options?: RequestOptions): Promise<DemoSubmitResponse>
 }
 

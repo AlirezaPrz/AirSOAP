@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from 'react'
 import { toApiError } from '../api/client'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { LiveTranscript } from '../components/LiveTranscript'
+import type { LiveHandlers } from '../api/client'
 import { MicIcon, StopIcon } from '../components/icons'
 import { Alert, PageHeader, Panel } from '../components/ui'
 import { formatDuration } from '../lib/format'
@@ -14,6 +16,8 @@ interface RecordingScreenProps {
   onStartRecording: () => Promise<void>
   onStopRecording: () => Promise<void>
   onCancel: () => void
+  /** Present while a live recording runs: follows its transcript. */
+  followLive?: (handlers: LiveHandlers) => () => void
 }
 
 const GUIDANCE = [
@@ -65,6 +69,7 @@ export function RecordingScreen({
   onStartRecording,
   onStopRecording,
   onCancel,
+  followLive,
 }: RecordingScreenProps) {
   const recording = state.status === 'recording'
   const [consent, setConsent] = useState(false)
@@ -182,6 +187,10 @@ export function RecordingScreen({
           </ul>
         </div>
       </Panel>
+
+      {recording && followLive && (
+        <LiveTranscript subscribe={followLive} simulated={simulated || state.liveSimulated === true} />
+      )}
 
       {confirmCancel && (
         <ConfirmDialog
