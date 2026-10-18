@@ -268,3 +268,15 @@ button:not(:disabled):active {
     animation: none;
   }
 }
+
+/*
+ * The mint wash, for explanation cards: the sign-in wash's soft fade in the accent's green, deeper
+ * at the top left and warming toward the bottom right. Light enough that accent ink stays above 7:1.
+ */
+.wash-mint {
+  background-color: #d8eee8;
+  background-image:
+    radial-gradient(75% 70% at 0% 0%, #b6ded4 0%, rgb(182 222 212 / 0) 72%),
+    radial-gradient(65% 60% at 100% 100%, #eef2e2 0%, rgb(238 242 226 / 0) 75%),
+    linear-gradient(150deg, #c9e7df 0%, #dcefea 50%, #e8f1e6 100%);
+}

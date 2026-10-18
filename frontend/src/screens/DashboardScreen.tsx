@@ -40,7 +40,7 @@ function AiPreview({ values, age }: { values: PatientFormValues; age: number | n
   ]
 
   return (
-    <section aria-labelledby="ai-preview" className="rounded-(--radius-panel) bg-accent-soft p-6 text-accent-ink lg:row-span-2">
+    <section aria-labelledby="ai-preview" className="wash-mint rounded-(--radius-panel) p-6 text-accent-ink lg:row-span-2">
       <h2 id="ai-preview" className="text-lg font-semibold">
         What the AI sees
       </h2>

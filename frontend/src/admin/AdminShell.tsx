@@ -19,8 +19,7 @@ const ROLES: { name: string; can: string; cannot: string }[] = [
 ]
 
 /**
- * Reference the account list cannot show: what each role allows, and what to do when no
- * administrator can sign in.
+ * Reference the account list cannot show: what each role allows.
  */
 function AdminReference() {
   return (
@@ -41,19 +40,6 @@ function AdminReference() {
         </dl>
         <p className="mt-3 text-ink-3">
           Someone with both roles picks one each time they sign in.
-        </p>
-      </section>
-
-      <section aria-labelledby="admin-recovery">
-        <h2 id="admin-recovery" className="font-semibold text-ink">
-          If no administrator can sign in
-        </h2>
-        <p className="mt-2 text-ink-3">
-          Someone with access to the device can reset a password or restore the administrator role with{' '}
-          <code className="rounded-sm bg-surface px-1 py-0.5 text-[13px] whitespace-nowrap text-ink">
-            python -m airsoap.admin
-          </code>
-          . The steps are under Recovery in the backend README.
         </p>
       </section>
     </div>
@@ -91,7 +77,7 @@ function AdminShell({ account, children }: { account: AccountInfo; children: Rea
   )
 }
 
-/** The administrator role: the account list, with role and recovery reference alongside. */
+/** The administrator role: the account list, with the role reference alongside. */
 export function AdminArea({
   auth,
   account,

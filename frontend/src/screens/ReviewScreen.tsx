@@ -1,8 +1,8 @@
-import { useId, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { SoapField, Speaker, TranscriptSegment } from '../api/types'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { ClinicalReviewPanel } from '../components/ClinicalReviewPanel'
+import { CLINICAL_REVIEW_HEADING, ClinicalReviewPanel } from '../components/ClinicalReviewPanel'
 import { CheckIcon, Spinner } from '../components/icons'
 import { Alert, PageHeader, Panel, inputClass } from '../components/ui'
 import { ENCOUNTER_TYPE_LABELS, SOAP_FIELD_META, SPEAKER_LABELS, formatDate, formatDuration } from '../lib/format'
@@ -171,7 +171,7 @@ function ReviewProgress({ steps }: { steps: { target: string; label: string; det
   }
   return (
     <nav aria-label="Review steps" className="-mt-3 mb-5">
-      <ol className="grid grid-cols-3 gap-1.5 sm:gap-2">
+      <ol className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2">
         {steps.map((step, index) => (
           <li key={step.label}>
             <button
@@ -242,6 +242,13 @@ export function ReviewScreen({
   const { speakers } = state.draft
   const suggesting = speakers.status === 'running'
   const complete = hasContent && missing.length === 0
+  const reviewResult = review.result
+  const reviewFresh = reviewResult !== null && reviewResult.basedOnVersion === version
+  const suggestionCount = reviewResult
+    ? (['informationGaps', 'followUpQuestions', 'differentialConsiderations', 'documentationInconsistencies'] as const)
+        .flatMap((key) => reviewResult.review[key])
+        .filter((suggestion) => !review.dismissed.includes(suggestion.id)).length
+    : 0
   const steps: { target: string; label: string; detail: string; state: StepState }[] = [
     {
       target: `${id}-transcript`,
@@ -265,7 +272,31 @@ export function ReviewScreen({
       detail: complete ? 'Ready to submit' : hasContent ? `${missing.length} empty` : 'After the draft',
       state: complete ? 'done' : hasContent ? 'current' : 'todo',
     },
+    {
+      target: CLINICAL_REVIEW_HEADING,
+      label: 'Clinical review',
+      detail:
+        review.status === 'running'
+          ? 'Running…'
+          : reviewFresh
+            ? `${suggestionCount} ${suggestionCount === 1 ? 'suggestion' : 'suggestions'}`
+            : reviewResult
+              ? 'Out of date'
+              : 'Optional second look',
+      state: reviewFresh && review.status !== 'running' ? 'done' : complete ? 'current' : 'todo',
+    },
   ]
+
+  // The transcript stays in view beside the note, just under the sticky steps bar.
+  const headerRef = useRef<HTMLDivElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(0)
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setHeaderHeight(header.offsetHeight))
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [])
 
   /** Two-person visits usually alternate; one click gets most labels right, then fix the odd one. */
   const alternate = () =>
@@ -282,7 +313,7 @@ export function ReviewScreen({
 
   return (
     <>
-      <div className="z-10 -mx-5 flow-root bg-ground px-5 sm:-mx-8 sm:px-8 lg:sticky lg:top-0 lg:-mx-12 lg:px-12 lg:pt-12 lg:-mt-12">
+      <div ref={headerRef} className="z-10 -mx-5 flow-root bg-ground px-5 sm:-mx-8 sm:px-8 lg:sticky lg:top-0 lg:-mx-12 lg:px-12 lg:pt-12 lg:-mt-12">
         <PageHeader
           title="Review draft note"
           description="Edit the transcript and each section. You are responsible for the final note."
@@ -313,9 +344,13 @@ export function ReviewScreen({
         </div>
       )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <Panel>
-          <div className="flex items-baseline justify-between gap-4 px-6 pt-6 sm:px-8 sm:pt-7">
+      <div
+        className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
+        style={{ '--review-top': `${headerHeight + 8}px` } as CSSProperties}
+      >
+        {/* On a wide screen the transcript scrolls inside its own panel, so a long visit never pushes the note away. */}
+        <Panel className="lg:sticky lg:top-(--review-top) lg:max-h-[calc(100dvh-var(--review-top)-24px)] lg:overflow-y-auto lg:overscroll-contain">
+          <div className="flex items-baseline justify-between gap-4 bg-surface px-6 pt-6 sm:px-8 sm:pt-7 lg:sticky lg:top-0 lg:z-[1] lg:pb-3">
             <h2 id={`${id}-transcript`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
               Transcript
             </h2>
@@ -324,7 +359,7 @@ export function ReviewScreen({
               {formatDuration(transcript.durationMs)}
             </p>
           </div>
-          <div className="mt-4 space-y-3 px-6 sm:px-8">
+          <div className="mt-4 space-y-3 px-6 sm:px-8 lg:mt-1">
             {labelled === 0 && !suggesting && (
               <Alert tone="info" title="Set who spoke">
                 Whisper cannot tell speakers apart, so every turn starts as Unknown. Set each one to Clinician or
@@ -389,143 +424,146 @@ export function ReviewScreen({
               )}
             </div>
           </div>
-          <ol aria-label="Transcript segments" className="mt-5 space-y-5 px-6 pb-7 sm:px-8">
+          <ol
+            aria-label="Transcript segments"
+            className="mt-5 space-y-5 px-6 pb-7 sm:px-8"
+          >
             {transcript.segments.map((segment, index) => (
               <SegmentEditor key={segment.id} segment={segment} index={index} editable={editable} onEdit={onEditSegment} />
             ))}
           </ol>
         </Panel>
 
-        <Panel className="px-6 py-6 sm:px-8 sm:py-7">
-          <div className="flex items-center justify-between gap-4">
-            <h2 id={`${id}-soap`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
-              SOAP note
-            </h2>
-            {hasContent && !generating && (
-              <Button variant="secondary" onClick={() => setConfirmRegenerate(true)} disabled={!editable}>
-                Regenerate
-              </Button>
-            )}
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {!hasContent && !generating && (
-              <div className="rounded-(--radius-panel) bg-accent-soft p-5 text-accent-ink">
-                <p className="text-[15px]">
-                  Label who spoke in the transcript, then generate a draft. A model on this device writes it from the
-                  transcript and your labels. You edit it before anything is submitted.
-                </p>
-                <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-4">
-                  <dt className="font-semibold">Sent to the model</dt>
-                  <dd>
-                    Labelled transcript with identifiers removed, age
-                    {age === null ? '' : ` (${toModelAge(age)} years)`}, encounter type
-                  </dd>
-                  <dt className="font-semibold">Never shared</dt>
-                  <dd>Name, date of birth, MRN</dd>
-                </dl>
-                {unconfirmed.length > 0 && (
-                  <p className="mt-3 text-sm font-medium">
-                    {unconfirmed.length} speaker {unconfirmed.length === 1 ? 'label is' : 'labels are'} AI suggestions
-                    you have not checked. The draft will use them as they are.
-                  </p>
-                )}
-                <Button className="mt-4" onClick={onGenerateSoap} disabled={!editable || suggesting}>
-                  Generate SOAP note
+        <div className="min-w-0 space-y-6">
+          <Panel className="px-6 py-6 sm:px-8 sm:py-7">
+            <div className="flex items-center justify-between gap-4">
+              <h2 id={`${id}-soap`} tabIndex={-1} className="scroll-mt-56 text-lg font-semibold focus:outline-none">
+                SOAP note
+              </h2>
+              {hasContent && !generating && (
+                <Button variant="secondary" onClick={() => setConfirmRegenerate(true)} disabled={!editable}>
+                  Regenerate
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
 
-            {generating && (
-              <Alert
-                tone="info"
-                action={
-                  <Button variant="secondary" onClick={onCancelSoap}>
-                    Cancel
-                  </Button>
-                }
-              >
-                <span className="flex items-center gap-2">
-                  <Spinner className="size-4" />
-                  Generating the SOAP note on this device. This can take a minute or two. You can keep editing;
-                  sections you type in are kept.
-                </span>
-              </Alert>
-            )}
-
-            {soapGeneration.status === 'failed' && (
-              <Alert
-                tone="error"
-                title="The note could not be generated"
-                action={
-                  soapGeneration.retryable ? (
-                    <Button variant="secondary" onClick={onGenerateSoap}>
-                      Try again
-                    </Button>
-                  ) : undefined
-                }
-              >
-                {soapGeneration.message}
-              </Alert>
-            )}
-
-            {warnings.length > 0 && (
-              <Alert tone="warning" title="Check these values against the visit">
-                <ul className="list-disc pl-5">
-                  {warnings.map((warning) => (
-                    <li key={`${warning.field}-${warning.message}`}>{warning.message}</li>
-                  ))}
-                </ul>
-              </Alert>
-            )}
-          </div>
-
-          <div className="mt-6 space-y-8">
-            {SOAP_FIELDS.map((field) => {
-              const { label, hint } = SOAP_FIELD_META[field]
-              const empty = hasContent && missing.includes(field)
-              const fieldId = `${id}-${field}`
-              return (
-                <div key={field}>
-                  <label htmlFor={fieldId} className="block text-[17px] font-semibold text-ink">
-                    {label}
-                  </label>
-                  <p id={`${fieldId}-hint`} className="mt-0.5 text-sm text-ink-3">
-                    {hint}
+            <div className="mt-4 space-y-3">
+              {!hasContent && !generating && (
+                <div className="wash-mint rounded-(--radius-panel) p-5 text-accent-ink">
+                  <p className="text-[15px]">
+                    Label who spoke in the transcript, then generate a draft. A model on this device writes it from the
+                    transcript and your labels. You edit it before anything is submitted.
                   </p>
-                  <textarea
-                    id={fieldId}
-                    rows={4}
-                    value={soap[field]}
-                    readOnly={!editable}
-                    onChange={(e) => onEditSoap(field, e.target.value)}
-                    aria-invalid={empty || undefined}
-                    aria-describedby={`${fieldId}-hint${empty ? ` ${fieldId}-error` : ''}`}
-                    className={`mt-3 ${inputClass} min-h-28 resize-y leading-relaxed [field-sizing:content]`}
-                  />
-                  <div className="mt-1.5 flex justify-between gap-4 text-sm">
-                    <span id={`${fieldId}-error`} className="font-medium text-danger">
-                      {empty ? `${label} cannot be empty.` : ''}
-                    </span>
-                    <span className="text-ink-3 tabular-nums">{soap[field].length} characters</span>
-                  </div>
+                  <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[auto_1fr] sm:gap-x-4">
+                    <dt className="font-semibold">Sent to the model</dt>
+                    <dd>
+                      Labelled transcript with identifiers removed, age
+                      {age === null ? '' : ` (${toModelAge(age)} years)`}, encounter type
+                    </dd>
+                    <dt className="font-semibold">Never shared</dt>
+                    <dd>Name, date of birth, MRN</dd>
+                  </dl>
+                  {unconfirmed.length > 0 && (
+                    <p className="mt-3 text-sm font-medium">
+                      {unconfirmed.length} speaker {unconfirmed.length === 1 ? 'label is' : 'labels are'} AI suggestions
+                      you have not checked. The draft will use them as they are.
+                    </p>
+                  )}
+                  <Button className="mt-4" onClick={onGenerateSoap} disabled={!editable || suggesting}>
+                    Generate SOAP note
+                  </Button>
                 </div>
-              )
-            })}
-          </div>
-        </Panel>
-      </div>
+              )}
 
-      <div className="mt-6">
-        <ClinicalReviewPanel
-          review={review}
-          version={version}
-          segments={transcript.segments}
-          canRun={editable && hasContent && !generating}
-          onRun={onRunReview}
-          onCancel={onCancelReview}
-          onDismiss={onDismissSuggestion}
-        />
+              {generating && (
+                <Alert
+                  tone="info"
+                  action={
+                    <Button variant="secondary" onClick={onCancelSoap}>
+                      Cancel
+                    </Button>
+                  }
+                >
+                  <span className="flex items-center gap-2">
+                    <Spinner className="size-4" />
+                    Generating the SOAP note on this device. This can take a minute or two. You can keep editing;
+                    sections you type in are kept.
+                  </span>
+                </Alert>
+              )}
+
+              {soapGeneration.status === 'failed' && (
+                <Alert
+                  tone="error"
+                  title="The note could not be generated"
+                  action={
+                    soapGeneration.retryable ? (
+                      <Button variant="secondary" onClick={onGenerateSoap}>
+                        Try again
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  {soapGeneration.message}
+                </Alert>
+              )}
+
+              {warnings.length > 0 && (
+                <Alert tone="warning" title="Check these values against the visit">
+                  <ul className="list-disc pl-5">
+                    {warnings.map((warning) => (
+                      <li key={`${warning.field}-${warning.message}`}>{warning.message}</li>
+                    ))}
+                  </ul>
+                </Alert>
+              )}
+            </div>
+
+            <div className="mt-6 space-y-8">
+              {SOAP_FIELDS.map((field) => {
+                const { label, hint } = SOAP_FIELD_META[field]
+                const empty = hasContent && missing.includes(field)
+                const fieldId = `${id}-${field}`
+                return (
+                  <div key={field}>
+                    <label htmlFor={fieldId} className="block text-[17px] font-semibold text-ink">
+                      {label}
+                    </label>
+                    <p id={`${fieldId}-hint`} className="mt-0.5 text-sm text-ink-3">
+                      {hint}
+                    </p>
+                    <textarea
+                      id={fieldId}
+                      rows={4}
+                      value={soap[field]}
+                      readOnly={!editable}
+                      onChange={(e) => onEditSoap(field, e.target.value)}
+                      aria-invalid={empty || undefined}
+                      aria-describedby={`${fieldId}-hint${empty ? ` ${fieldId}-error` : ''}`}
+                      className={`mt-3 ${inputClass} min-h-28 resize-y leading-relaxed [field-sizing:content]`}
+                    />
+                    <div className="mt-1.5 flex justify-between gap-4 text-sm">
+                      <span id={`${fieldId}-error`} className="font-medium text-danger">
+                        {empty ? `${label} cannot be empty.` : ''}
+                      </span>
+                      <span className="text-ink-3 tabular-nums">{soap[field].length} characters</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Panel>
+
+          <ClinicalReviewPanel
+            review={review}
+            version={version}
+            segments={transcript.segments}
+            canRun={editable && hasContent && !generating}
+            onRun={onRunReview}
+            onCancel={onCancelReview}
+            onDismiss={onDismissSuggestion}
+          />
+        </div>
       </div>
 
       {(state.status === 'confirming' || state.status === 'submitting') && (

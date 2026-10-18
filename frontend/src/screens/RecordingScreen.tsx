@@ -28,9 +28,11 @@ const GUIDANCE = [
   'Nothing is final: you review and edit everything before it is submitted.',
 ]
 
-// Fixed, deterministic bar heights and timings for the simulated level meter.
-const BARS = Array.from({ length: 48 }, (_, i) => ({
-  height: 30 + ((i * 47) % 70),
+// Fixed, deterministic bar heights and timings for the simulated level meter. Enough bars to span
+// the panel; a quieter envelope at both ends so the trace reads as a voice, not a block.
+const BAR_COUNT = 96
+const BARS = Array.from({ length: BAR_COUNT }, (_, i) => ({
+  height: Math.round((22 + ((i * 47) % 78)) * (0.45 + 0.55 * Math.sin((Math.PI * (i + 0.5)) / BAR_COUNT))),
   duration: 700 + ((i * 131) % 600),
   delay: (i * 53) % 400,
 }))
@@ -47,13 +49,13 @@ function useElapsed(startedAt: number | null) {
 
 function LevelMeter({ active }: { active: boolean }) {
   return (
-    <div aria-hidden className="flex h-14 items-center gap-[3px] overflow-hidden">
+    <div aria-hidden className="flex h-full items-center justify-between gap-px overflow-hidden">
       {BARS.map((bar, i) => (
         <span
           key={i}
-          className={`max-w-1 min-w-0 flex-1 origin-center rounded-full ${active ? 'level-bar bg-accent' : 'bg-field'}`}
+          className={`w-[3px] shrink-0 origin-center rounded-full max-sm:[&:nth-child(n+49)]:hidden ${active ? 'level-bar bg-accent' : 'bg-field'}`}
           style={{
-            height: active ? `${bar.height}%` : '12%',
+            height: active ? `${bar.height}%` : '6%',
             animationDuration: `${bar.duration}ms`,
             animationDelay: `${bar.delay}ms`,
           }}
@@ -108,7 +110,7 @@ export function RecordingScreen({
       />
 
       <Panel className="grid grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0 p-6 sm:p-10">
+        <div className="flex min-w-0 flex-col p-6 sm:p-10">
           <p className={`flex items-center gap-2 text-[15px] font-medium ${recording ? 'text-danger' : 'text-ink-3'}`}>
             <span aria-hidden className="relative flex size-2.5">
               {recording && <span className="absolute inset-0 animate-ping rounded-full bg-danger/60" />}
@@ -126,7 +128,8 @@ export function RecordingScreen({
             {formatDuration(elapsed)}
           </p>
 
-          <div className="mt-8">
+          {/* The trace fills the room the guidance leaves, across the whole width of the panel. */}
+          <div className="mt-8 h-20 lg:h-auto lg:min-h-24 lg:flex-1">
             <LevelMeter active={recording} />
           </div>
 

@@ -27,6 +27,9 @@ const GAP_LABELS = {
   uncertain: 'Status unclear',
 } as const
 
+/** The heading's ID, so the review steps can jump to it. */
+export const CLINICAL_REVIEW_HEADING = 'clinical-review-heading'
+
 const UNCERTAINTY_LABELS = { low: 'Low', medium: 'Medium', high: 'High' } as const
 
 interface ClinicalReviewPanelProps {
@@ -111,10 +114,14 @@ export function ClinicalReviewPanel({
 
   return (
     <Panel className="px-6 py-6 sm:px-8 sm:py-7">
-      <section aria-labelledby="clinical-review-heading">
+      <section aria-labelledby={CLINICAL_REVIEW_HEADING}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-2xl">
-            <h2 id="clinical-review-heading" className="text-lg font-semibold">
+            <h2
+              id={CLINICAL_REVIEW_HEADING}
+              tabIndex={-1}
+              className="scroll-mt-56 text-lg font-semibold focus:outline-none"
+            >
               Clinical review
             </h2>
             <p className="mt-1 text-[15px] text-ink-2">

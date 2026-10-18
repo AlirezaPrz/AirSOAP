@@ -171,7 +171,7 @@ export function ProcessingScreen({ state, onRetry, onCancel }: ProcessingScreenP
         {state.attempt > 1 && !failed && <p className="mt-8 text-sm text-ink-3">Retry attempt {state.attempt}</p>}
       </Panel>
 
-      <section className="mt-6 rounded-(--radius-panel) bg-accent-soft px-6 py-6 text-accent-ink sm:px-10">
+      <section className="wash-mint mt-6 rounded-(--radius-panel) px-6 py-6 text-accent-ink sm:px-10">
         <h2 className="text-base font-semibold">What happens next</h2>
         <p className="mt-1 text-[15px]">
           You check the transcript and mark who spoke each turn. Then you ask for the SOAP draft, edit it, and, if you

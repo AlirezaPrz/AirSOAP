@@ -43,7 +43,7 @@ export function PageHeader({
 type AlertTone = 'info' | 'warning' | 'error'
 
 const ALERT_TONES: Record<AlertTone, string> = {
-  info: 'bg-accent-soft text-accent-ink',
+  info: 'wash-mint text-accent-ink',
   warning: 'bg-warn-soft text-warn-ink',
   error: 'bg-danger-soft text-[#7a1a12]',
 }
