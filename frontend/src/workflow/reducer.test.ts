@@ -143,6 +143,34 @@ describe('workflowReducer — edits', () => {
     expect(segments[2]).toEqual(transcript.segments[2]) // untouched
   })
 
+  it('alternates speakers as a pattern that AI suggestions may refine, unlike clinician labels', () => {
+    const alternated = run([...toReview, { type: 'ALTERNATE_SPEAKERS', first: 'patient' }])
+    const { segments } = draftOf(alternated).transcript
+    expect(segments.slice(0, 3).map((segment) => segment.speaker)).toEqual(['patient', 'clinician', 'patient'])
+    expect(segments.every((segment) => segment.speakerSource === 'alternate')).toBe(true)
+
+    const sentText = Object.fromEntries(segments.map((segment) => [segment.id, segment.text]))
+    const suggested = run(
+      [
+        { type: 'EDIT_TRANSCRIPT_SEGMENT', segmentId: 'seg-2', changes: { speaker: 'patient' } },
+        { type: 'SPEAKERS_REQUESTED', requestId: 1 },
+        {
+          type: 'SPEAKERS_SUCCEEDED',
+          requestId: 1,
+          sentText,
+          suggestions: [
+            { id: 'seg-1', speaker: 'clinician' },
+            { id: 'seg-2', speaker: 'clinician' },
+          ],
+        },
+      ],
+      alternated,
+    )
+    const [first, second] = draftOf(suggested).transcript.segments
+    expect(first).toMatchObject({ speaker: 'clinician', speakerSource: 'ai' })
+    expect(second).toMatchObject({ speaker: 'patient', speakerSource: 'clinician' })
+  })
+
   it('ignores edits outside the review state', () => {
     const confirming = run(toConfirming)
     expect(workflowReducer(confirming, { type: 'EDIT_SOAP_FIELD', field: 'plan', value: 'x' })).toBe(confirming)

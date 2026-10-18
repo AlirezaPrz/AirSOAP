@@ -115,6 +115,7 @@ export type WorkflowAction =
   | { type: 'PROCESSING_FAILED'; error: ProcessingError }
   | { type: 'RETRY_PROCESSING' }
   | { type: 'EDIT_TRANSCRIPT_SEGMENT'; segmentId: string; changes: Partial<Pick<TranscriptSegment, 'text' | 'speaker'>> }
+  | { type: 'ALTERNATE_SPEAKERS'; first: Exclude<Speaker, 'unknown'> }
   | { type: 'EDIT_SOAP_FIELD'; field: SoapField; value: string }
   | { type: 'SOAP_REQUESTED'; requestId: number }
   | { type: 'SOAP_SUCCEEDED'; requestId: number; soap: SoapNote; warnings: SoapWarning[] }
@@ -276,6 +277,21 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
       const segments = state.draft.transcript.segments.map((segment) =>
         segment.id === action.segmentId ? { ...segment, ...action.changes, ...source } : segment,
       )
+      return withDraft(state, {
+        transcript: { ...state.draft.transcript, segments },
+        version: state.draft.version + 1,
+      })
+    }
+
+    case 'ALTERNATE_SPEAKERS': {
+      if (!inReview(state)) return state
+      // Two-person visits usually alternate. Every turn gets the pattern; it stays open to AI suggestions.
+      const second = action.first === 'clinician' ? 'patient' : 'clinician'
+      const segments = state.draft.transcript.segments.map((segment, index) => ({
+        ...segment,
+        speaker: index % 2 === 0 ? action.first : second,
+        speakerSource: 'alternate' as const,
+      }))
       return withDraft(state, {
         transcript: { ...state.draft.transcript, segments },
         version: state.draft.version + 1,

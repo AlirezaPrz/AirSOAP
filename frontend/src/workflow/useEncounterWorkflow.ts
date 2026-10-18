@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, type Dispatch } from 'react'
 import { isCancellation, toApiError, type AirSoapApi } from '../api/client'
-import type { EncounterType, PatientIdentity, SoapField, TranscriptSegment } from '../api/types'
+import type { EncounterType, PatientIdentity, SoapField, Speaker, TranscriptSegment } from '../api/types'
 import { buildClinicalReviewRequest, buildSoapRequest, buildSpeakerRequest } from './privacy'
 import {
   canCancel,
@@ -145,6 +145,10 @@ export function useEncounterWorkflow(api: AirSoapApi) {
 
     editTranscriptSegment(segmentId: string, changes: Partial<Pick<TranscriptSegment, 'text' | 'speaker'>>) {
       dispatch({ type: 'EDIT_TRANSCRIPT_SEGMENT', segmentId, changes })
+    },
+
+    alternateSpeakers(first: Exclude<Speaker, 'unknown'>) {
+      dispatch({ type: 'ALTERNATE_SPEAKERS', first })
     },
 
     editSoapField(field: SoapField, value: string) {

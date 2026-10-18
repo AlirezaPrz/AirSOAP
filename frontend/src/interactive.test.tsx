@@ -45,7 +45,7 @@ describe('what the AI sees', () => {
 })
 
 describe('labelling speakers', () => {
-  it('labels alternating turns in one click and tracks progress in the steps bar', async () => {
+  it('alternates speakers, flips the order on a second click, and tracks progress in the steps bar', async () => {
     const user = userEvent.setup()
     render(<App api={createMockApi({ latencyScale: 0 })} />)
     await fillTestPatient(user)
@@ -58,14 +58,20 @@ describe('labelling speakers', () => {
     const steps = screen.getByRole('navigation', { name: 'Review steps' })
     expect(within(steps).getByRole('button', { name: /label speakers/i })).toHaveTextContent(/0 of \d+ turns/)
 
-    await user.click(screen.getByRole('button', { name: 'Alternate, clinician first' }))
+    await user.click(screen.getByRole('button', { name: 'Alternate speakers' }))
     const speakers = screen.getAllByRole('combobox', { name: /speaker for segment/i })
     expect(speakers[0]).toHaveDisplayValue('Clinician')
     expect(speakers[1]).toHaveDisplayValue('Patient')
     await waitFor(() =>
       expect(within(steps).getByRole('button', { name: /label speakers/i })).toHaveTextContent('Every turn labelled'),
     )
-    expect(screen.queryByRole('button', { name: 'Alternate, clinician first' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Alternating, clinician first')
+
+    // A second click starts with the patient instead; suggestions can still refine the pattern.
+    await user.click(screen.getByRole('button', { name: 'Alternate speakers' }))
+    expect(speakers[0]).toHaveDisplayValue('Patient')
+    expect(speakers[1]).toHaveDisplayValue('Clinician')
+    expect(screen.getByRole('button', { name: 'Suggest speakers' })).toBeEnabled()
   })
 
   it('fills the remaining unknown turns', async () => {

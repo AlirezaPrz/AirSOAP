@@ -16,8 +16,12 @@ export type Speaker = 'clinician' | 'patient' | 'unknown'
 export interface TranscriptSegment {
   id: string
   speaker: Speaker
-  /** Who set the label: the clinician, or an AI suggestion they have not confirmed. Absent: not labelled yet. */
-  speakerSource?: 'clinician' | 'ai'
+  /**
+   * Who set the label: the clinician, an AI suggestion they have not confirmed, or the alternating
+   * pattern the clinician applied (a starting guess that "Suggest speakers" may still refine).
+   * Absent: not labelled yet.
+   */
+  speakerSource?: 'clinician' | 'ai' | 'alternate'
   startMs: number
   endMs: number
   text: string

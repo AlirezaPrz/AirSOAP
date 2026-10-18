@@ -104,6 +104,7 @@ export default function App({ api: providedApi, account }: AppProps) {
             onDiscard={workflow.cancelEncounter}
             onSuggestSpeakers={workflow.suggestSpeakers}
             onCancelSpeakers={workflow.cancelSpeakers}
+            onAlternateSpeakers={workflow.alternateSpeakers}
           />
         )
       case 'completed':

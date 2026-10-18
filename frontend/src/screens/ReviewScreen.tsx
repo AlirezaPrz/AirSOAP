@@ -24,6 +24,7 @@ interface ReviewScreenProps {
   onDiscard: () => void
   onSuggestSpeakers: () => void
   onCancelSpeakers: () => void
+  onAlternateSpeakers: (first: Exclude<Speaker, 'unknown'>) => void
 }
 
 const SPEAKER_STYLES: Record<Speaker, string> = {
@@ -92,23 +93,22 @@ function SegmentEditor({
   )
 }
 
-/** "Suggest speakers": the 3B model labels turns it can tell apart from the words; the clinician checks them. */
+/**
+ * What "Suggest speakers" is doing or did: the 3B model labels turns it can tell apart from the
+ * words, and the clinician checks them. The buttons themselves sit in the labelling toolbar.
+ */
 function SpeakerSuggestions({
   status,
   message,
   applied,
   unconfirmed,
-  onSuggest,
   onCancel,
-  onConfirm,
 }: {
   status: 'idle' | 'running' | 'failed'
   message: string | null
   applied: number | null
   unconfirmed: number
-  onSuggest: () => void
   onCancel: () => void
-  onConfirm: () => void
 }) {
   if (status === 'running') {
     return (
@@ -129,9 +129,11 @@ function SpeakerSuggestions({
       </div>
     )
   }
+  const failed = status === 'failed' && message
+  if (!failed && !(applied !== null && unconfirmed > 0) && applied !== 0) return null
   return (
     <div className="mt-3 space-y-2">
-      {status === 'failed' && message && <Alert tone="error">{message}</Alert>}
+      {failed && <Alert tone="error">{message}</Alert>}
       {applied !== null && unconfirmed > 0 && (
         <p className="text-sm text-ink-2" role="status">
           {applied} {applied === 1 ? 'turn' : 'turns'} got an <span className="font-semibold">AI</span> label. Check
@@ -143,16 +145,6 @@ function SpeakerSuggestions({
           The AI could not tell any more speakers apart from the words alone.
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onSuggest}>
-          Suggest speakers
-        </Button>
-        {unconfirmed > 0 && (
-          <Button className="h-8 px-3 text-sm" onClick={onConfirm}>
-            Accept {unconfirmed} AI {unconfirmed === 1 ? 'label' : 'labels'}
-          </Button>
-        )}
-      </div>
     </div>
   )
 }
@@ -224,6 +216,7 @@ export function ReviewScreen({
   onDiscard,
   onSuggestSpeakers,
   onCancelSpeakers,
+  onAlternateSpeakers,
 }: ReviewScreenProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
@@ -298,11 +291,17 @@ export function ReviewScreen({
     return () => observer.disconnect()
   }, [])
 
-  /** Two-person visits usually alternate; one click gets most labels right, then fix the odd one. */
-  const alternate = () =>
-    transcript.segments.forEach((segment, index) =>
-      onEditSegment(segment.id, { speaker: index % 2 === 0 ? 'clinician' : 'patient' }),
-    )
+  /**
+   * Two-person visits usually alternate; one click gets most labels right, then fix the odd one.
+   * The first click starts with the clinician; clicking again while that pattern stands flips it.
+   */
+  const alternating =
+    total > 0 && transcript.segments.every((segment) => segment.speakerSource === 'alternate')
+      ? transcript.segments[0].speaker
+      : null
+  const alternate = () => onAlternateSpeakers(alternating === 'clinician' ? 'patient' : 'clinician')
+  /** Suggestions can only fill or refine labels the clinician has not set themselves. */
+  const canSuggest = transcript.segments.some((segment) => segment.speakerSource !== 'clinician')
   /** The clinician has looked at the AI's labels and accepts them as theirs. */
   const confirmSuggestions = () =>
     unconfirmed.forEach((segment) => onEditSegment(segment.id, { speaker: segment.speaker }))
@@ -381,23 +380,33 @@ export function ReviewScreen({
                   />
                 </div>
               </div>
-              {editable && (!allLabelled || unconfirmed.length > 0) && (
+              {editable && (
                 <SpeakerSuggestions
                   status={speakers.status}
                   message={speakers.message}
                   applied={speakers.applied}
                   unconfirmed={unconfirmed.length}
-                  onSuggest={onSuggestSpeakers}
                   onCancel={onCancelSpeakers}
-                  onConfirm={confirmSuggestions}
                 />
               )}
-              {editable && !allLabelled && total > 1 && !suggesting && (
+              {editable && total > 0 && !suggesting && (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="secondary" className="h-8 px-3 text-sm" onClick={alternate}>
-                    Alternate, clinician first
-                  </Button>
-                  {labelled > 0 && (
+                  {canSuggest && (
+                    <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onSuggestSpeakers}>
+                      Suggest speakers
+                    </Button>
+                  )}
+                  {total > 1 && (
+                    <Button variant="secondary" className="h-8 px-3 text-sm" onClick={alternate}>
+                      Alternate speakers
+                    </Button>
+                  )}
+                  {unconfirmed.length > 0 && (
+                    <Button className="h-8 px-3 text-sm" onClick={confirmSuggestions}>
+                      Accept {unconfirmed.length} AI {unconfirmed.length === 1 ? 'label' : 'labels'}
+                    </Button>
+                  )}
+                  {labelled > 0 && !allLabelled && (
                     <>
                       <Button variant="secondary" className="h-8 px-3 text-sm" onClick={() => fillRemaining('patient')}>
                         Rest are patient
@@ -408,6 +417,12 @@ export function ReviewScreen({
                     </>
                   )}
                 </div>
+              )}
+              {editable && alternating && (
+                <p className="mt-2 text-sm text-ink-3" role="status">
+                  Alternating, {alternating === 'clinician' ? 'clinician' : 'patient'} first. Click again to start with
+                  the {alternating === 'clinician' ? 'patient' : 'clinician'}.
+                </p>
               )}
             </div>
           </div>
