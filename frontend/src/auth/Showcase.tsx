@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
-import consultation from '../assets/photos/doctor-talking-with-a-patient.webp'
-import device from '../assets/photos/raspberry-pi-4-model-b-top.webp'
-import stethoscope from '../assets/photos/doctors-stethoscope-1.webp'
+import consultation from '../assets/photos/consultation-notes.webp'
+import device from '../assets/photos/device-board.webp'
+import stethoscope from '../assets/photos/stethoscope-desk.webp'
 
 interface Slide {
   image: string
   alt: string
   title: string
   body: string
-  credit: string
   /** How the photo sits in its frame. */
   position: string
 }
@@ -16,27 +15,24 @@ interface Slide {
 const SLIDES: Slide[] = [
   {
     image: consultation,
-    alt: 'A doctor in a white coat talks with a seated patient in an exam room.',
+    alt: 'A doctor in a white coat with a stethoscope writes notes on a clipboard across the desk from a patient.',
     title: 'Look at the patient, not the keyboard.',
     body: 'AirSOAP records the conversation, so you can listen and examine while it keeps track.',
-    credit: 'Photo: National Cancer Institute, public domain',
-    position: '50% 30%',
+    position: '50% 62%',
   },
   {
     image: device,
-    alt: 'A Raspberry Pi circuit board seen from above.',
+    alt: 'A green Raspberry Pi circuit board with several compute modules plugged in.',
     title: 'Everything stays in the room.',
     body: 'Transcription and note drafting run on a small computer on the desk. Nothing goes to the cloud.',
-    credit: 'Photo: Laserlicht, CC BY-SA 4.0, via Wikimedia Commons',
-    position: '50% 50%',
+    position: '50% 55%',
   },
   {
     image: stethoscope,
-    alt: 'A stethoscope lying on a white surface.',
+    alt: 'A teal stethoscope lying on a clipboard on a desk, beside notebooks, glasses and a laptop.',
     title: 'You stay the clinician.',
     body: 'The draft only uses what was said. You check every line before anything is submitted.',
-    credit: 'Photo: Stethoscopes, CC BY-SA 3.0, via Wikimedia Commons',
-    position: '50% 55%',
+    position: '45% 50%',
   },
 ]
 
@@ -89,9 +85,6 @@ export function Showcase() {
             style={{ objectPosition: s.position }}
           />
         ))}
-        <p className="absolute right-3 bottom-2 text-[11px] text-white/80 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]">
-          {slide.credit}
-        </p>
       </div>
 
       <div aria-live={running ? 'off' : 'polite'} className="mt-6 min-h-[112px]">

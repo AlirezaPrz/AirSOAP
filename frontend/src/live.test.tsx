@@ -197,10 +197,13 @@ describe('an encounter with live transcription (demo backend)', () => {
     await screen.findByRole('heading', { level: 1, name: 'Review draft note' }, { timeout: 3000 })
 
     await user.click(screen.getByRole('button', { name: 'Suggest speakers' }))
-    await screen.findByText(/marked/i, {}, { timeout: 3000 })
+    await screen.findByText(/got an/i, {}, { timeout: 3000 })
     const segments = screen.getByRole('list', { name: 'Transcript segments' })
     expect(within(segments).getAllByText('AI').length).toBeGreaterThan(0)
 
+    // Suggestions are shown apart from confirmed labels, in the bar and in the step.
+    expect(screen.getByRole('navigation', { name: 'Review steps' })).toHaveTextContent(/\d+ AI labels? to check/)
+    expect(screen.getByRole('progressbar', { name: 'Speakers labelled' })).toBeInTheDocument()
     const accept = screen.getByRole('button', { name: /accept \d+ ai label/i })
     await user.click(accept)
     expect(within(segments).queryAllByText('AI')).toHaveLength(0)

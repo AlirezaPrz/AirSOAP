@@ -134,8 +134,8 @@ function SpeakerSuggestions({
       {status === 'failed' && message && <Alert tone="error">{message}</Alert>}
       {applied !== null && unconfirmed > 0 && (
         <p className="text-sm text-ink-2" role="status">
-          The AI suggested {applied} {applied === 1 ? 'label' : 'labels'}, marked <span className="font-semibold">AI</span>.
-          Check each one; turns it could not tell apart stay Unknown, and your own labels were kept.
+          {applied} {applied === 1 ? 'turn' : 'turns'} got an <span className="font-semibold">AI</span> label. Check
+          them, then accept. Anything it was unsure of stays Unknown; your own labels were kept.
         </p>
       )}
       {applied === 0 && (
@@ -148,7 +148,7 @@ function SpeakerSuggestions({
           Suggest speakers
         </Button>
         {unconfirmed > 0 && (
-          <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onConfirm}>
+          <Button className="h-8 px-3 text-sm" onClick={onConfirm}>
             Accept {unconfirmed} AI {unconfirmed === 1 ? 'label' : 'labels'}
           </Button>
         )}
@@ -325,17 +325,18 @@ export function ReviewScreen({
             </p>
           </div>
           <div className="mt-4 space-y-3 px-6 sm:px-8">
-            {labelled === 0 && (
+            {labelled === 0 && !suggesting && (
               <Alert tone="info" title="Set who spoke">
                 Whisper cannot tell speakers apart, so every turn starts as Unknown. Set each one to Clinician or
                 Patient. The note and the clinical review use your labels.
               </Alert>
             )}
             <div>
-              <div className="flex items-baseline justify-between text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-sm">
                 <span className="text-ink-2">Speakers labelled</span>
                 <span className="text-ink-3 tabular-nums">
                   {labelled} of {total} turns labelled
+                  {unconfirmed.length > 0 && <span className="font-medium text-ink-2"> · {unconfirmed.length} to check</span>}
                 </span>
               </div>
               <div
@@ -346,10 +347,17 @@ export function ReviewScreen({
                 aria-valuenow={labelled}
                 className="mt-2 h-1.5 overflow-hidden rounded-full bg-rail"
               >
-                <div
-                  className="h-full rounded-full bg-accent transition-[width] duration-500 ease-(--ease-out-expo)"
-                  style={{ width: `${total ? (labelled / total) * 100 : 0}%` }}
-                />
+                {/* Solid: confirmed by the clinician. Pale: suggested by the AI and not yet checked. */}
+                <div className="flex h-full">
+                  <div
+                    className="h-full bg-accent transition-[width] duration-500 ease-(--ease-out-expo)"
+                    style={{ width: `${total ? ((labelled - unconfirmed.length) / total) * 100 : 0}%` }}
+                  />
+                  <div
+                    className="h-full bg-brand-navy/35 transition-[width] duration-500 ease-(--ease-out-expo)"
+                    style={{ width: `${total ? (unconfirmed.length / total) * 100 : 0}%` }}
+                  />
+                </div>
               </div>
               {editable && (!allLabelled || unconfirmed.length > 0) && (
                 <SpeakerSuggestions

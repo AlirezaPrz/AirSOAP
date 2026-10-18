@@ -175,7 +175,8 @@ export function RecordingScreen({
           )}
         </div>
 
-        <div className="bg-sunken/70 p-6 sm:p-10 lg:p-8">
+        {/* While a live transcript is on screen, a phone shows that first: the tips mattered before recording. */}
+        <div className={`bg-sunken/70 p-6 sm:p-10 lg:p-8 ${recording && followLive ? 'hidden lg:block' : ''}`}>
           <h2 className="text-base font-semibold">For a better draft</h2>
           <ul className="mt-4 space-y-3.5 text-[15px] text-ink-2">
             {GUIDANCE.map((tip) => (
